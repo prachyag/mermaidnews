@@ -47,9 +47,11 @@ export function RegisterForm() {
   if (pending) {
     return (
       <div className="w-full max-w-sm rounded-xl border border-gray-200 p-6 text-center dark:border-gray-700">
-        <h1 className="mb-1 text-xl font-bold">📰 News Curator</h1>
+        <h1 className="mb-1 text-xl font-bold">PostMaid</h1>
         <p className="mb-1 text-2xl">⏳</p>
-        <p className="mb-4 text-sm text-gray-600 dark:text-gray-300">{pending}</p>
+        <p className="mb-4 text-sm text-gray-600 dark:text-gray-300">
+          {pending}
+        </p>
         <Link
           href="/login"
           className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
@@ -65,8 +67,10 @@ export function RegisterForm() {
       onSubmit={handleSubmit}
       className="w-full max-w-sm rounded-xl border border-gray-200 p-6 dark:border-gray-700"
     >
-      <h1 className="mb-1 text-xl font-bold">📰 News Curator</h1>
-      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">สมัครสมาชิกใหม่</p>
+      <h1 className="mb-1 text-xl font-bold">PostMaid</h1>
+      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+        สมัครสมาชิกใหม่
+      </p>
       <input
         required
         autoFocus

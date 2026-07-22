@@ -37,7 +37,7 @@ export function LoginForm({ registrationOpen }: { registrationOpen: boolean }) {
       onSubmit={handleSubmit}
       className="w-full max-w-sm rounded-xl border border-gray-200 p-6 dark:border-gray-700"
     >
-      <h1 className="mb-1 text-xl font-bold">📰 News Curator</h1>
+      <h1 className="mb-1 text-xl font-bold">PostMaid</h1>
       <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
         เข้าสู่ระบบเพื่อใช้งาน
       </p>

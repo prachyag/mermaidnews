@@ -1,12 +1,14 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { cookies } from "next/headers";
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { users } from "@/db/schema";
-import { resolveUserId, SESSION_COOKIE } from "@/lib/session";
-import { verifyTokenOptimistic } from "@/lib/auth";
 import "./globals.css";
+
+import { Geist, Geist_Mono } from "next/font/google";
+import { SESSION_COOKIE, resolveUserId } from "@/lib/session";
+
+import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import { db } from "@/db";
+import { eq } from "drizzle-orm";
+import { users } from "@/db/schema";
+import { verifyTokenOptimistic } from "@/lib/auth";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,7 +21,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "News Curator",
+  title: "PostMaid",
   description: "รวบรวมข่าวตามหัวข้อที่สนใจ พร้อมเตรียมโพสลง Facebook",
 };
 
@@ -40,13 +42,21 @@ async function currentViewer(): Promise<Viewer> {
 
   const userId = await resolveUserId(token);
   if (userId !== null) {
-    const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
     if (user) {
-      return { kind: "user", username: user.username, isAdmin: user.role === "admin" };
+      return {
+        kind: "user",
+        username: user.username,
+        isAdmin: user.role === "admin",
+      };
     }
   }
   // token พังหรือหมดอายุตามลายเซ็น = แค่ยังไม่ล็อกอิน (proxy พาไปหน้า login อยู่แล้ว)
-  return (await verifyTokenOptimistic(token)) ? { kind: "stale" } : { kind: "guest" };
+  return (await verifyTokenOptimistic(token))
+    ? { kind: "stale" }
+    : { kind: "guest" };
 }
 
 export default async function RootLayout({
@@ -64,10 +74,13 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <nav className="border-b border-gray-200 dark:border-gray-800">
           <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-3 text-sm">
-            <span className="font-semibold">📰 News Curator</span>
+            <span className="font-semibold">PostMaid</span>
             {user && (
               <>
-                <a href="/" className="text-gray-600 hover:underline dark:text-gray-300">
+                <a
+                  href="/"
+                  className="text-gray-600 hover:underline dark:text-gray-300"
+                >
                   ข่าว
                 </a>
                 <a
@@ -117,7 +130,8 @@ function SessionEnded() {
         <p className="mb-1 text-2xl">🔒</p>
         <h1 className="mb-2 text-lg font-bold">เซสชันนี้ใช้งานไม่ได้แล้ว</h1>
         <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
-          บัญชีของคุณอาจถูกเพิกถอนสิทธิ์ สิทธิ์หมดอายุ หรือถูกให้ออกจากระบบ — ติดต่อผู้ดูแลระบบหากคิดว่าผิดพลาด
+          บัญชีของคุณอาจถูกเพิกถอนสิทธิ์ สิทธิ์หมดอายุ หรือถูกให้ออกจากระบบ —
+          ติดต่อผู้ดูแลระบบหากคิดว่าผิดพลาด
         </p>
         <a
           href="/api/auth/logout"

@@ -71,7 +71,9 @@ export default function Home() {
   }, []);
 
   const loadArticles = useCallback(async (topicId: string, status: string) => {
-    const res = await fetch(`/api/articles?topicId=${topicId}&status=${status}`);
+    const res = await fetch(
+      `/api/articles?topicId=${topicId}&status=${status}`,
+    );
     const data = await res.json();
     setArticleRows(data.articles ?? []);
     setCounts(data.counts ?? EMPTY_COUNTS);
@@ -137,7 +139,9 @@ export default function Home() {
     const parts = [
       `ร่างโพสต์ ${total.drafted}`,
       `ไม่เกี่ยวข้อง ${total.irrelevant}`,
-      ...(total.failed > 0 ? [`ล้มเหลว ${total.failed} (${lastError ?? "?"})`] : []),
+      ...(total.failed > 0
+        ? [`ล้มเหลว ${total.failed} (${lastError ?? "?"})`]
+        : []),
     ];
     setMessage(`🤖 ประมวลผลเสร็จ: ${parts.join(" • ")}`);
     await reloadArticles();
@@ -200,7 +204,9 @@ export default function Home() {
       }
     } catch (err) {
       setFetching(false);
-      setMessage(`เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`);
+      setMessage(
+        `เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -213,7 +219,8 @@ export default function Home() {
     const scope =
       selectedTopic === "all"
         ? "ทุกหัวข้อ"
-        : (topics.find((t) => String(t.id) === selectedTopic)?.name ?? "หัวข้อที่เลือก");
+        : (topics.find((t) => String(t.id) === selectedTopic)?.name ??
+          "หัวข้อที่เลือก");
     const total = counts[statusFilter as keyof ArticleCounts] ?? 0;
 
     if (
@@ -239,7 +246,9 @@ export default function Home() {
         setMessage(data.error ?? "ลบไม่สำเร็จ");
         return;
       }
-      setMessage(`🗑️ ลบข่าว "${label}" ไปแล้ว ${data.deleted} ชิ้น (บล็อกไม่ให้กลับมาแล้ว)`);
+      setMessage(
+        `🗑️ ลบข่าว "${label}" ไปแล้ว ${data.deleted} ชิ้น (บล็อกไม่ให้กลับมาแล้ว)`,
+      );
       await reloadArticles();
     } finally {
       setBulkDeleting(false);
@@ -258,14 +267,15 @@ export default function Home() {
     statusFilter === "irrelevant" || statusFilter === "rejected"
       ? (counts[statusFilter] ?? 0)
       : 0;
-  const shownTotal = counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
+  const shownTotal =
+    counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
   // API คืนได้สูงสุด 200 แถว — ถ้ายอดจริงมากกว่าที่ได้มา แปลว่ารายการถูกตัด
   const truncated = shownTotal > articleRows.length;
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">📰 News Curator</h1>
+        <h1 className="text-2xl font-bold">PostMaid</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400">
           รวบรวมข่าวตามหัวข้อที่สนใจ พร้อมเตรียมโพสลง Facebook
         </p>
@@ -336,7 +346,9 @@ export default function Home() {
               return (
                 <span key={t.id}>
                   {t.name}: ดึงล่าสุด{" "}
-                  {last ? formatDate(last.finishedAt ?? last.startedAt) : "ยังไม่เคยดึง"}
+                  {last
+                    ? formatDate(last.finishedAt ?? last.startedAt)
+                    : "ยังไม่เคยดึง"}
                 </span>
               );
             })}

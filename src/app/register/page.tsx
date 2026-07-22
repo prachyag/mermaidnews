@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { isRegistrationOpen } from "@/lib/registration";
 import { RegisterForm } from "./RegisterForm";
+import { isRegistrationOpen } from "@/lib/registration";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,7 @@ export default async function RegisterPage() {
         <RegisterForm />
       ) : (
         <div className="w-full max-w-sm rounded-xl border border-gray-200 p-6 text-center dark:border-gray-700">
-          <h1 className="mb-1 text-xl font-bold">📰 News Curator</h1>
+          <h1 className="mb-1 text-xl font-bold">PostMaid</h1>
           <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             ขณะนี้ระบบปิดรับสมัครสมาชิกใหม่
           </p>
