@@ -217,7 +217,12 @@ describe("processPendingArticles — การรวมชุด (batching)", ()
   it("ข่าวหลายชิ้นในหัวข้อเดียวกัน ยิง AI แค่ request เดียว (เหตุผลหลักของฟีเจอร์นี้)", async () => {
     for (let i = 0; i < 8; i++) await seedArticle();
 
-    const result = await processPendingArticles(topicId, 10, userId, { delayMs: 0 });
+    // ระบุ batchSize ตรง ๆ เพื่อให้เทสวัด "การรวมชุด" อย่างเดียว
+    // ไม่ผูกกับค่า default ที่อาจเปลี่ยนตามพฤติกรรมของโมเดล (เคยเป็น 10 ตอนนี้ 5)
+    const result = await processPendingArticles(topicId, 10, userId, {
+      delayMs: 0,
+      batchSize: 8,
+    });
 
     expect(result.processed).toBe(8);
     expect(result.drafted).toBe(8);

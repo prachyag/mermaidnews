@@ -12,20 +12,53 @@ import type {
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
 /**
- * ตั้งค่าที่ใช้ร่วมกันทุก request — สองบรรทัดนี้สำคัญมาก วัดผลกับ API จริงแล้ว:
+ * งบ "คิดก่อนตอบ" (thinking) ต่อ 1 request
  *
- * thinkingBudget: 0 — ปิดโหมด "คิดก่อนตอบ" ของ Gemini 2.5 Flash
- *   งานนี้เป็นการคัดกรอง+เขียนแคปชันสั้น ๆ ไม่ต้องใช้การให้เหตุผลหลายขั้น
- *   แต่ถ้าเปิดไว้ (ค่า default) โมเดลคิดยาวมากกับ prompt ที่มีกฎเยอะ:
- *   วัดได้ 124 วินาที/ชุด และ thinking token กินโควตา output จน JSON ถูกตัดกลางคัน
+ * ทำไมต้องจำกัด: งานนี้เป็นการคัดกรอง+เขียนแคปชันสั้น ๆ ไม่ต้องให้เหตุผลหลายขั้น
+ * ถ้าปล่อยค่า default โมเดลคิดยาวมากกับ prompt ที่มีกฎเยอะ — วัดได้ 124 วินาที/ชุด
+ * และ thinking token กินโควตา output จน JSON ถูกตัดกลางคัน
  *
- * maxOutputTokens — กันผลลัพธ์ถูกตัดเงียบ ๆ เมื่อชุดใหญ่ (ข้อความไทยกิน token เยอะ)
+ * ทำไมไม่ใช่ 0: เคยใช้ 0 (ปิดสนิท) และใช้ได้จริงจนถึงกลางปี 2026 แต่ alias "-latest"
+ * ถูก Google ขยับไปรุ่นใหม่ที่ "ห้ามปิด thinking สนิท" ทำให้ 0 กลายเป็นค่าไม่ถูกต้อง
+ * → ทุก request พังด้วย 400 INVALID_ARGUMENT (พังพร้อมกันทั้งระบบ ไม่ใช่แค่บางข่าว)
+ * ค่าบวกน้อย ๆ ให้ผลใกล้เคียงการปิด แต่ไม่ผิดกติกาของรุ่นใหม่
  */
+const THINKING_BUDGET = Number(process.env.GEMINI_THINKING_BUDGET) || 128;
+
+/**
+ * เพดาน output ต่อ 1 request — **นับรวม thinking token ด้วย** (จุดนี้สำคัญมาก วัดจาก API จริง)
+ *
+ * ตอนที่ยังปิด thinking ได้ (thinkingBudget: 0) ค่า 8192 พอเหลือเฟือเพราะเป็นเนื้อคำตอบล้วน
+ * พอรุ่นใหม่บังคับให้มี thinking โควตาก้อนเดียวกันถูกแบ่งไปให้การคิด เหลือให้เขียนคำตอบไม่พอ
+ * อาการที่เจอ: finishReason=MAX_TOKENS, JSON ถูกตัดกลางคัน, หรือได้ relevant=true แต่ไม่มีแคปชัน
+ * จึงต้องตั้งให้กว้างพอสำหรับ "คิด + ตอบ" รวมกัน
+ */
+const MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS) || 32768;
+
 const GENERATION_CONFIG = {
   temperature: 0.4,
-  thinkingConfig: { thinkingBudget: 0 },
-  maxOutputTokens: 8192,
+  thinkingConfig: { thinkingBudget: THINKING_BUDGET },
+  maxOutputTokens: MAX_OUTPUT_TOKENS,
 } as const;
+
+/** config เดียวกันแต่ตัด thinkingConfig ออก — ใช้เป็นทางถอยเมื่อรุ่นใหม่ไม่รับ thinkingConfig */
+const GENERATION_CONFIG_NO_THINKING = {
+  temperature: GENERATION_CONFIG.temperature,
+  maxOutputTokens: MAX_OUTPUT_TOKENS,
+} as const;
+
+/** จำนวนครั้งสูงสุดที่ยิงซ้ำเมื่อเจออาการชั่วคราว (ตอบกลับว่าง) */
+const MAX_ATTEMPTS = 3;
+/** หน่วงก่อนลองใหม่ คูณตามรอบ (1x, 2x) — กันยิงรัวใส่ API ที่กำลังมีปัญหา */
+const RETRY_DELAY_MS = 700;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function isInvalidArgument(err: unknown): boolean {
+  return /INVALID_ARGUMENT|invalid argument/i.test(
+    err instanceof Error ? err.message : String(err),
+  );
+}
 
 /** โยน error ที่อ่านรู้เรื่องเมื่อผลลัพธ์ถูกตัดกลางคัน แทนที่จะไปพังตอน JSON.parse แบบงง ๆ */
 function assertNotTruncated(finishReason: string | undefined): void {
@@ -150,25 +183,73 @@ ${input.description ? `เนื้อหาย่อ: ${input.description}` : "
 
 export class GeminiProvider implements AiProvider {
   private client: GoogleGenAI;
+  /** จำไว้ว่ารุ่นที่ใช้อยู่ไม่รับ thinkingConfig — ครั้งต่อไปจะได้ไม่ต้องเสียคำขอลองใหม่ทุกครั้ง */
+  private thinkingUnsupported = false;
 
   constructor(apiKey: string) {
     this.client = new GoogleGenAI({ apiKey });
   }
 
-  async processArticle(input: ProcessArticleInput): Promise<ArticleAssessment> {
-    const response = await this.client.models.generateContent({
+  /** ยิง 1 ครั้ง ตามว่าตอนนี้ยังใช้ thinkingConfig ได้อยู่ไหม */
+  private callOnce(contents: string, schema: object) {
+    return this.client.models.generateContent({
       model: MODEL,
-      contents: buildPrompt(input),
+      contents,
       config: {
         responseMimeType: "application/json",
-        responseSchema,
-        ...GENERATION_CONFIG,
+        responseSchema: schema,
+        ...(this.thinkingUnsupported ? GENERATION_CONFIG_NO_THINKING : GENERATION_CONFIG),
       },
     });
+  }
 
-    assertNotTruncated(response.candidates?.[0]?.finishReason);
-    const text = response.text;
-    if (!text) throw new Error("Gemini ตอบกลับว่าง");
+  /**
+   * ยิง generateContent พร้อมรับมือความไม่แน่นอนของ API สองแบบที่เจอจริง:
+   *
+   * 1. INVALID_ARGUMENT จาก thinkingConfig — alias "-latest" ถูก Google ขยับรุ่นได้ตลอด
+   *    และรุ่นใหม่เคยทำให้ค่าที่เคยใช้ได้ (thinkingBudget: 0) กลายเป็นค่าไม่ถูกต้อง จนระบบล่มทั้งระบบ
+   *    เจอแล้วจะจำไว้ แล้วยิงใหม่โดยตัด thinkingConfig ออก (ทำงานต่อได้ แค่คิดนานขึ้น)
+   *
+   * 2. ตอบกลับว่าง — เกิดเป็นครั้งคราวโดยไม่มีรูปแบบแน่นอน (วัดได้ ~2/5 ครั้งกับชุดเล็ก)
+   *    เป็นอาการชั่วคราว ไม่ใช่คำขอผิด จึงลองใหม่ได้ ถ้าไม่ลองใหม่ ข่าว "ทั้งชุด" จะล้มเหลวพร้อมกัน
+   *
+   * ส่วน MAX_TOKENS ไม่ลองใหม่ เพราะเป็นปัญหาเชิงตั้งค่า (ชุดใหญ่เกิน) — ลองกี่ครั้งก็เหมือนเดิม
+   */
+  private async generate(contents: string, schema: object) {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const response = await this.callOnce(contents, schema);
+        assertNotTruncated(response.candidates?.[0]?.finishReason);
+        if (response.text?.trim()) return response;
+        lastError = new Error("Gemini ตอบกลับว่าง");
+      } catch (err) {
+        // รุ่นนี้ไม่รับ thinkingConfig — จำไว้แล้ววนไปยิงใหม่แบบไม่มี thinking ทันที
+        if (isInvalidArgument(err) && !this.thinkingUnsupported) {
+          this.thinkingUnsupported = true;
+          console.warn(
+            `[gemini] รุ่น "${MODEL}" ไม่รับ thinkingConfig (budget=${THINKING_BUDGET}) — ` +
+              `ยิงใหม่โดยไม่ตั้ง thinking พิจารณาตั้ง GEMINI_THINKING_BUDGET ให้เหมาะกับรุ่นนี้`,
+          );
+          continue;
+        }
+        throw err instanceof Error
+          ? new Error(`เรียก Gemini รุ่น "${MODEL}" ไม่สำเร็จ: ${err.message}`)
+          : err;
+      }
+      if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS * attempt);
+    }
+
+    throw new Error(
+      `Gemini รุ่น "${MODEL}" ตอบกลับว่างติดต่อกัน ${MAX_ATTEMPTS} ครั้ง — ` +
+        `(${lastError instanceof Error ? lastError.message : "ไม่ทราบสาเหตุ"})`,
+    );
+  }
+
+  async processArticle(input: ProcessArticleInput): Promise<ArticleAssessment> {
+    // generate() รับประกันแล้วว่าไม่ว่างและไม่ถูกตัดกลางคัน (ลองใหม่/โยน error ให้เอง)
+    const text = (await this.generate(buildPrompt(input), responseSchema)).text!;
 
     let parsed: {
       relevant?: boolean;
@@ -189,19 +270,7 @@ export class GeminiProvider implements AiProvider {
   async processArticleBatch(input: ProcessBatchInput): Promise<BatchAssessment[]> {
     if (input.articles.length === 0) return [];
 
-    const response = await this.client.models.generateContent({
-      model: MODEL,
-      contents: buildBatchPrompt(input),
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: batchResponseSchema,
-        ...GENERATION_CONFIG,
-      },
-    });
-
-    assertNotTruncated(response.candidates?.[0]?.finishReason);
-    const text = response.text;
-    if (!text) throw new Error("Gemini ตอบกลับว่าง");
+    const text = (await this.generate(buildBatchPrompt(input), batchResponseSchema)).text!;
 
     let parsed: { results?: unknown };
     try {
