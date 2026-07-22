@@ -1,0 +1,37 @@
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { resolveUserId, SESSION_COOKIE } from "@/lib/session";
+import { listUsers } from "@/lib/admin";
+import { AUDIT_LOG_MAX_ENTRIES, listAuditLog } from "@/lib/audit";
+import { UserTable } from "./UserTable";
+import { AuditLog } from "./AuditLog";
+
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  const userId = await resolveUserId((await cookies()).get(SESSION_COOKIE)?.value);
+  if (userId === null) redirect("/login");
+
+  // ใช้ DAL ตัวเดียวกับ API — คนที่ไม่ใช่ admin เดินมาหน้านี้เองจะไม่เห็นข้อมูลใคร
+  const result = await listUsers(userId);
+  if (!result.ok) redirect("/");
+  const audit = (await listAuditLog(userId)) ?? [];
+
+  return (
+    <main className="mx-auto w-full max-w-4xl px-4 py-6">
+      <h1 className="mb-1 text-xl font-bold">จัดการผู้ใช้</h1>
+      <p className="mb-6 text-sm text-gray-500 dark:text-gray-400">
+        บัญชีที่สมัครใหม่จะอยู่สถานะ &quot;รออนุมัติ&quot; และใช้งานไม่ได้จนกว่าคุณจะอนุมัติ
+      </p>
+      <UserTable initial={result.data} meId={userId} />
+
+      <h2 className="mt-10 mb-1 text-lg font-bold">ประวัติการดำเนินการ</h2>
+      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+        บันทึกทุกครั้งที่ผู้ดูแลระบบเปลี่ยนสถานะ สิทธิ์ ระดับ หรือรหัสผ่านของบัญชีอื่น
+        รวมถึง <span className="font-medium text-red-600 dark:text-red-400">ความพยายามที่ถูกปฏิเสธ</span>{" "}
+        — เก็บ {AUDIT_LOG_MAX_ENTRIES.toLocaleString("th-TH")} รายการล่าสุด ที่เก่ากว่านั้นถูกลบอัตโนมัติ
+      </p>
+      <AuditLog entries={audit} />
+    </main>
+  );
+}

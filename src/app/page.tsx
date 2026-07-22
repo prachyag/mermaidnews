@@ -1,65 +1,419 @@
-import Image from "next/image";
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArticleCard, type ArticleRow } from "@/components/ArticleCard";
+import { STATUS_META, STATUS_ORDER, statusLabel } from "@/lib/article-status";
+import type { ArticleCounts } from "@/lib/article-counts";
+
+type Topic = {
+  id: number;
+  name: string;
+  keywords: string[];
+  enabled: boolean;
+};
+
+type RunRow = {
+  id: number;
+  topicId: number;
+  topicName: string;
+  trigger: string;
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  found: number;
+  newCount: number;
+  duplicates: number;
+  errorCount: number;
+  errorMessage: string | null;
+};
+
+/**
+ * แท็บกรองสถานะ เรียงตามเส้นทางการทำงานจริง (ดึง -> AI ร่าง -> อนุมัติ -> โพส)
+ * ต่อท้ายด้วยสถานะปลายทางที่ไม่ได้ไปต่อ — ดูลำดับที่ src/lib/article-status.ts
+ */
+const STATUS_TABS: { value: string; label: string; dot: string | null }[] = [
+  { value: "all", label: "ทั้งหมด", dot: null },
+  ...STATUS_ORDER.map((s) => ({
+    value: s as string,
+    label: STATUS_META[s].short,
+    dot: STATUS_META[s].dot,
+  })),
+];
+
+const EMPTY_COUNTS = { all: 0 } as ArticleCounts;
+
+function formatDate(value: string | null): string {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("th-TH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
 
 export default function Home() {
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [articleRows, setArticleRows] = useState<ArticleRow[]>([]);
+  const [counts, setCounts] = useState<ArticleCounts>(EMPTY_COUNTS);
+  const [runs, setRuns] = useState<RunRow[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [fetching, setFetching] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const batchRunIds = useRef<number[]>([]);
+
+  const loadTopics = useCallback(async () => {
+    const res = await fetch("/api/topics");
+    const data = await res.json();
+    setTopics(data.topics ?? []);
+  }, []);
+
+  const loadArticles = useCallback(async (topicId: string, status: string) => {
+    const res = await fetch(`/api/articles?topicId=${topicId}&status=${status}`);
+    const data = await res.json();
+    setArticleRows(data.articles ?? []);
+    setCounts(data.counts ?? EMPTY_COUNTS);
+  }, []);
+
+  const loadStatus = useCallback(async (): Promise<{
+    anyRunning: boolean;
+    runs: RunRow[];
+  }> => {
+    const res = await fetch("/api/fetch/status");
+    const data = await res.json();
+    setRuns(data.runs ?? []);
+    return data;
+  }, []);
+
+  useEffect(() => {
+    loadTopics();
+    loadStatus();
+  }, [loadTopics, loadStatus]);
+
+  useEffect(() => {
+    loadArticles(selectedTopic, statusFilter);
+  }, [selectedTopic, statusFilter, loadArticles]);
+
+  const reloadArticles = useCallback(
+    () => loadArticles(selectedTopic, statusFilter),
+    [loadArticles, selectedTopic, statusFilter],
+  );
+
+  // ประมวลผลข่าวค้างด้วย AI ทีละชุดเล็ก วนจนหมด (เว้นจังหวะให้อยู่ใน rate limit)
+  const startProcessing = useCallback(async () => {
+    setProcessing(true);
+    const total = { drafted: 0, irrelevant: 0, failed: 0 };
+    let lastError: string | null = null;
+    try {
+      for (let i = 0; i < 100; i++) {
+        const res = await fetch("/api/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // 10 ข่าว = 1 request ไปหา AI (ฝั่งเซิร์ฟเวอร์รวมเป็นชุดให้)
+          body: JSON.stringify({ topicId: selectedTopic, limit: 10 }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          lastError = data.error ?? "เกิดข้อผิดพลาด";
+          break;
+        }
+        total.drafted += data.drafted;
+        total.irrelevant += data.irrelevant;
+        total.failed += data.failed;
+        lastError = data.lastError;
+        await reloadArticles();
+        if (data.remaining === 0 || data.processed === 0) break;
+        // ทั้งชุดล้มเหลวหมด (เช่น ชน rate limit / key ผิด) — หยุดก่อน ไม่วนต่อ
+        if (data.failed === data.processed) break;
+        setMessage(
+          `🤖 AI กำลังประมวลผล... เหลือ ${data.remaining} ข่าว (ร่างแล้ว ${total.drafted}, ไม่เกี่ยวข้อง ${total.irrelevant})`,
+        );
+      }
+    } finally {
+      setProcessing(false);
+    }
+    const parts = [
+      `ร่างโพสต์ ${total.drafted}`,
+      `ไม่เกี่ยวข้อง ${total.irrelevant}`,
+      ...(total.failed > 0 ? [`ล้มเหลว ${total.failed} (${lastError ?? "?"})`] : []),
+    ];
+    setMessage(`🤖 ประมวลผลเสร็จ: ${parts.join(" • ")}`);
+    await reloadArticles();
+  }, [selectedTopic, reloadArticles]);
+
+  // ระหว่างดึง: poll สถานะทุก 2 วินาทีจนจบ สรุปผล แล้วส่งต่อให้ AI ประมวลผลอัตโนมัติ
+  useEffect(() => {
+    if (!fetching) return;
+    const interval = setInterval(async () => {
+      const data = await loadStatus();
+      const batch = data.runs.filter((r) => batchRunIds.current.includes(r.id));
+      const stillRunning = batch.some((r) => r.status === "running");
+      if (!stillRunning) {
+        setFetching(false);
+        const summary = batch
+          .map((r) =>
+            r.status === "failed"
+              ? `${r.topicName}: ดึงล้มเหลว (${r.errorMessage ?? "ไม่ทราบสาเหตุ"})`
+              : `${r.topicName}: พบข่าวใหม่ ${r.newCount} รายการ (ข้าม ${r.duplicates} ที่ซ้ำ)`,
+          )
+          .join(" • ");
+        setMessage(summary || "ดึงเสร็จแล้ว");
+        await reloadArticles();
+        const anyNew = batch.some((r) => r.newCount > 0);
+        if (anyNew) startProcessing();
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [fetching, loadStatus, reloadArticles, startProcessing]);
+
+  async function handleFetchNow() {
+    setMessage(null);
+    setFetching(true);
+    try {
+      const res = await fetch("/api/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topicId: selectedTopic }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFetching(false);
+        setMessage(data.error ?? "เกิดข้อผิดพลาด");
+        return;
+      }
+      batchRunIds.current = (data.started ?? []).map(
+        (r: { runId: number }) => r.runId,
+      );
+      const skippedNote = (data.skipped ?? [])
+        .map(
+          (s: { topicName: string; reason: string }) =>
+            `${s.topicName}: ${s.reason === "locked" ? "กำลังดึงอยู่แล้ว" : "ปิดใช้งานอยู่"}`,
+        )
+        .join(" • ");
+      if (batchRunIds.current.length === 0) {
+        setFetching(false);
+        setMessage(skippedNote || "ไม่มีหัวข้อให้ดึง");
+      } else if (skippedNote) {
+        setMessage(skippedNote);
+      }
+    } catch (err) {
+      setFetching(false);
+      setMessage(`เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * ลบข่าวทั้งหมดที่กำลังแสดงอยู่ (เฉพาะสถานะที่ลบยกเข่งได้)
+   * ผูกกับฟิลเตอร์ที่เห็นบนจอ เพื่อให้จำนวนที่บอกตรงกับที่จะลบจริงเสมอ
+   */
+  async function bulkDelete() {
+    const label = statusLabel(statusFilter); // ป้ายเต็ม — ข้อความยืนยันต้องชัด ไม่ใช้ตัวย่อบนแท็บ
+    const scope =
+      selectedTopic === "all"
+        ? "ทุกหัวข้อ"
+        : (topics.find((t) => String(t.id) === selectedTopic)?.name ?? "หัวข้อที่เลือก");
+    const total = counts[statusFilter as keyof ArticleCounts] ?? 0;
+
+    if (
+      !window.confirm(
+        `ลบข่าว "${label}" ทั้งหมด ${total} ชิ้น ใน${scope}?\n\n` +
+          `ข่าวเหล่านี้จะถูกบล็อก ไม่ถูกดึงกลับมาอีก (และไม่ถูกส่งให้ AI ประเมินซ้ำ)\n` +
+          `เปลี่ยนใจได้ที่หน้าจัดการหัวข้อ → "🚫 รายการที่บล็อกไว้"`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkDeleting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/articles/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: statusFilter, topicId: selectedTopic }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.error ?? "ลบไม่สำเร็จ");
+        return;
+      }
+      setMessage(`🗑️ ลบข่าว "${label}" ไปแล้ว ${data.deleted} ชิ้น (บล็อกไม่ให้กลับมาแล้ว)`);
+      await reloadArticles();
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  const lastRunByTopic = new Map<number, RunRow>();
+  for (const run of runs) {
+    if (!lastRunByTopic.has(run.topicId)) lastRunByTopic.set(run.topicId, run);
+  }
+
+  // ใช้ยอดจากเซิร์ฟเวอร์ ไม่ใช่ articleRows — รายการถูกจำกัด 200 แถวและถูกกรองตามแท็บอยู่
+  const pendingCount = counts.fetched ?? 0;
+  // ปุ่มลบยกเข่งโผล่เฉพาะแท็บที่ลบยกเข่งได้ (ดู BULK_DELETABLE ใน src/lib/bulk-delete.ts)
+  const bulkCount =
+    statusFilter === "irrelevant" || statusFilter === "rejected"
+      ? (counts[statusFilter] ?? 0)
+      : 0;
+  const shownTotal = counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
+  // API คืนได้สูงสุด 200 แถว — ถ้ายอดจริงมากกว่าที่ได้มา แปลว่ารายการถูกตัด
+  const truncated = shownTotal > articleRows.length;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="mx-auto w-full max-w-4xl px-4 py-8">
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold">📰 News Curator</h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          รวบรวมข่าวตามหัวข้อที่สนใจ พร้อมเตรียมโพสลง Facebook
+        </p>
+      </header>
+
+      <section className="mb-6 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm font-medium" htmlFor="topic-select">
+            หัวข้อ:
+          </label>
+          <select
+            id="topic-select"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+            value={selectedTopic}
+            onChange={(e) => setSelectedTopic(e.target.value)}
+          >
+            <option value="all">ทุกหัวข้อ</option>
+            {topics.map((t) => (
+              <option key={t.id} value={String(t.id)}>
+                {t.name}
+                {t.enabled ? "" : " (ปิดอยู่)"}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleFetchNow}
+            disabled={fetching || processing}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {fetching ? "⏳ กำลังดึงข่าว..." : "🔄 ดึงข่าวทันที"}
+          </button>
+
+          {pendingCount > 0 && (
+            <button
+              onClick={startProcessing}
+              disabled={fetching || processing}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              {processing
+                ? "⏳ AI กำลังประมวลผล..."
+                : `🤖 ประมวลผล AI (ค้าง ${pendingCount})`}
+            </button>
+          )}
+
+          {bulkCount > 0 && (
+            <button
+              onClick={bulkDelete}
+              disabled={fetching || processing || bulkDeleting}
+              className="ml-auto rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+              title="ลบข่าวทั้งหมดในแท็บนี้ พร้อมบล็อกไม่ให้ถูกดึงกลับมาอีก"
             >
-              Learning
-            </a>{" "}
-            center.
+              {bulkDeleting ? "⏳ กำลังลบ..." : `🗑️ ลบทั้งหมด (${bulkCount})`}
+            </button>
+          )}
+        </div>
+
+        {message && (
+          <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+            {message}
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        )}
+
+        {topics.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+            {topics.map((t) => {
+              const last = lastRunByTopic.get(t.id);
+              return (
+                <span key={t.id}>
+                  {t.name}: ดึงล่าสุด{" "}
+                  {last ? formatDate(last.finishedAt ?? last.startedAt) : "ยังไม่เคยดึง"}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* แท็บสถานะ — sticky ไว้เพราะรายการข่าวยาว ผู้ใช้ต้องสลับแท็บได้โดยไม่ต้องเลื่อนขึ้น */}
+      <div
+        role="tablist"
+        aria-label="กรองตามสถานะ"
+        className="sticky top-0 z-10 -mx-4 mb-4 flex gap-1 overflow-x-auto border-b border-gray-200 bg-white/80 px-4 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/80"
+      >
+        {STATUS_TABS.map((tab) => {
+          const n = counts[tab.value as keyof ArticleCounts] ?? 0;
+          const active = statusFilter === tab.value;
+          return (
+            <button
+              key={tab.value}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setStatusFilter(tab.value)}
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors ${
+                active
+                  ? "bg-gray-900 font-semibold text-white dark:bg-white dark:text-gray-900"
+                  : n === 0
+                    ? "text-gray-400 hover:bg-gray-100 dark:text-gray-600 dark:hover:bg-gray-800"
+                    : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+            >
+              {tab.dot && (
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${tab.dot} ${active ? "" : n === 0 ? "opacity-40" : ""}`}
+                />
+              )}
+              {tab.label}
+              <span
+                className={`tabular-nums ${active ? "opacity-80" : "text-gray-400 dark:text-gray-500"}`}
+              >
+                {n}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <section>
+        <h2 className="mb-3 flex flex-wrap items-baseline gap-x-2 text-lg font-semibold">
+          {statusFilter === "all" ? "ข่าวทั้งหมด" : statusLabel(statusFilter)}
+          <span className="text-sm font-normal text-gray-500">
+            {/* บอกตามจริงเมื่อรายการถูกตัด — เดิมโชว์ "200 รายการ" ทั้งที่มีมากกว่านั้น */}
+            {truncated
+              ? `แสดง ${articleRows.length} จาก ${shownTotal} รายการ`
+              : `${shownTotal} รายการ`}
+          </span>
+        </h2>
+        {articleRows.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700">
+            {counts.all === 0
+              ? 'ยังไม่มีข่าวในระบบ — กด "ดึงข่าวทันที" เพื่อเริ่ม'
+              : `ไม่มีข่าวสถานะ "${statusLabel(statusFilter)}" — ลองเลือกแท็บอื่น`}
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {articleRows.map((a) => (
+              <ArticleCard key={a.id} article={a} onChanged={reloadArticles} />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <p className="mt-8 text-center text-xs text-gray-400">
+        จัดการหัวข้อได้ที่หน้า{" "}
+        <Link href="/topics" className="underline">
+          จัดการหัวข้อ
+        </Link>
+      </p>
     </div>
   );
 }
