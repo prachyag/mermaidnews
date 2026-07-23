@@ -278,6 +278,41 @@ describe("generateLongFormCaptions", () => {
     expect(res).toMatchObject({ generated: 0, skipped: 0 });
   });
 
+  /**
+   * หน้าเว็บยิงทีละชิ้นหลายรอบเพื่อกัน timeout — แต่ละรอบเป็นคำขออิสระ
+   * ถ้าไม่บอกว่าตัวไหนพังไปแล้ว มันจะหยิบตัวคะแนนสูงสุดตัวเดิมมาลองซ้ำทุกรอบ
+   */
+  it("excludeIds = ข้ามข่าวที่รอบก่อนลองแล้วพัง ไม่วนลองตัวเดิม", async () => {
+    const failed = await seed({ interestScore: 0.9 });
+    const next = await seed({ interestScore: 0.8 });
+
+    const res = await generateLongFormCaptions({ userId, limit: 1, excludeIds: [failed.id] });
+
+    expect(res.generated).toBe(1);
+    expect(res.outcomes[0].articleId).toBe(next.id);
+  });
+
+  it("หมดงบเวลา = หยุดก่อน คืนผลบางส่วนพร้อมบอกว่าให้กดต่อ (ไม่ปล่อยให้ถูกตัดทิ้ง)", async () => {
+    await seed();
+    await seed();
+
+    // budgetMs 0 = เลยงบตั้งแต่ชิ้นแรก จึงไม่ควรเรียก AI เลยสักครั้ง
+    const res = await generateLongFormCaptions({ userId, limit: 5, budgetMs: 0 });
+
+    expect(res.generated).toBe(0);
+    expect(mockProcessArticle).not.toHaveBeenCalled();
+    expect(res.outcomes).toHaveLength(1);
+    expect(res.outcomes[0]).toMatchObject({ ok: false, outOfTime: true });
+    expect(res.outcomes[0].reason).toContain("กดอีกครั้ง");
+  });
+
+  it("งบเวลาเหลือเฟือ = ทำครบตามที่ขอ ไม่หยุดกลางคัน", async () => {
+    for (let i = 0; i < 3; i++) await seed();
+    const res = await generateLongFormCaptions({ userId, limit: 3, budgetMs: 60_000 });
+    expect(res.generated).toBe(3);
+    expect(res.outcomes.every((o) => !o.outOfTime)).toBe(true);
+  });
+
   it("ใช้ resolvedUrl ที่ cache ไว้แล้ว ไม่แกะซ้ำ", async () => {
     const a = await seed();
     await db

@@ -117,6 +117,36 @@ describe("resolveArticleUrl — ทางที่พัง ต้องคื�
     if (!result.ok) expect(result.reason).toContain("ECONNRESET");
   });
 
+  /**
+   * เดิมไม่มีเพดานเวลาเลย — Google ค้างทีเดียวกินงบทั้งคำขอจนฟังก์ชันถูกตัดทิ้ง
+   * งานที่สำเร็จไปแล้วในคำขอเดียวกันก็หายตามไปด้วย
+   */
+  it("Google ตอบช้าเกินเพดาน = ยกเลิกแล้วคืนเหตุผล ไม่ปล่อยค้าง", async () => {
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }),
+    ) as unknown as typeof fetch;
+
+    const result = await resolveArticleUrl(GOOGLE_URL, { fetchImpl, timeoutMs: 10 });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("หมดเวลา");
+  });
+
+  it("ส่ง signal ไปกับทุกคำขอ (ไม่งั้นเพดานเวลาไม่มีผล)", async () => {
+    const fetchImpl = happyFetch();
+    await resolveArticleUrl(GOOGLE_URL, { fetchImpl });
+    const calls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const [, init] of calls) expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("batchexecute ตอบ error", async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       if (String(input).includes("batchexecute")) return res("", false, 400);

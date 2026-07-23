@@ -24,6 +24,30 @@ const GOOGLE_NEWS_HOST = "news.google.com";
 const BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
+/**
+ * เพดานเวลาต่อการยิง Google 1 ครั้ง (ฟังก์ชันนี้ยิง 2 ครั้ง = worst case 2 เท่า)
+ *
+ * เดิมไม่มีเพดานเลย พึ่ง default ของ runtime ซึ่งบน serverless แปลว่า "ค้างจนฟังก์ชันตาย"
+ * ทำให้ทั้งคำขอถูกตัดทิ้งเพราะข่าวชิ้นเดียวที่ Google ตอบช้า — เสียงานที่ทำสำเร็จไปแล้วด้วย
+ */
+const DEFAULT_TIMEOUT_MS = 8_000;
+
+/** ยิง fetch พร้อมเพดานเวลา — คืน null เมื่อหมดเวลา ให้ผู้เรียกแปลงเป็น reason เอง */
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ResolveResult =
   | { ok: true; url: string; /** true = ลิงก์เดิมไม่ใช่ของ google อยู่แล้ว ไม่ได้แกะอะไร */ passthrough?: boolean }
   | { ok: false; reason: string };
@@ -81,7 +105,10 @@ function extractUrl(text: string): string | null {
  */
 export async function resolveArticleUrl(
   url: string,
-  { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {},
+  {
+    fetchImpl = fetch,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<ResolveResult> {
   if (!isGoogleNewsUrl(url)) {
     return isUsableArticleUrl(url)
@@ -91,10 +118,18 @@ export async function resolveArticleUrl(
 
   let html: string;
   try {
-    const page = await fetchImpl(url, { headers: { "User-Agent": UA } });
+    const page = await fetchWithTimeout(
+      fetchImpl,
+      url,
+      { headers: { "User-Agent": UA } },
+      timeoutMs,
+    );
     if (!page.ok) return { ok: false, reason: `เปิดหน้า Google News ไม่ได้ (HTTP ${page.status})` };
     html = await page.text();
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, reason: "หมดเวลาเชื่อมต่อ Google News" };
+    }
     return {
       ok: false,
       reason: `ติดต่อ Google News ไม่ได้: ${err instanceof Error ? err.message : String(err)}`,
@@ -134,20 +169,28 @@ export async function resolveArticleUrl(
   const payload = [[["Fbv4je", JSON.stringify(request), null, "1"]]];
 
   try {
-    const res = await fetchImpl(BATCH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "User-Agent": UA,
+    const res = await fetchWithTimeout(
+      fetchImpl,
+      BATCH_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "User-Agent": UA,
+        },
+        body: new URLSearchParams({ "f.req": JSON.stringify(payload) }).toString(),
       },
-      body: new URLSearchParams({ "f.req": JSON.stringify(payload) }).toString(),
-    });
+      timeoutMs,
+    );
     if (!res.ok) return { ok: false, reason: `Google ปฏิเสธคำขอแกะลิงก์ (HTTP ${res.status})` };
 
     const resolved = extractUrl(await res.text());
     if (!resolved) return { ok: false, reason: "Google ไม่ได้ส่งลิงก์จริงกลับมา" };
     return { ok: true, url: resolved };
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, reason: "หมดเวลาเชื่อมต่อ Google News" };
+    }
     return {
       ok: false,
       reason: `แกะลิงก์ไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`,

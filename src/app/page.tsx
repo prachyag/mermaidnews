@@ -237,7 +237,14 @@ export default function Home() {
 
   /**
    * เขียนแคปชันแบบยาวให้ข่าวเด่น — ระบบไปอ่านเนื้อข่าวจากเว็บจริงมาเป็นวัตถุดิบ
-   * ทำได้ทีละไม่กี่ชิ้นเพราะแต่ละชิ้นต้องโหลดหน้าเว็บ + เรียก AI ด้วย prompt ยาว
+   *
+   * ยิง **ทีละ 1 ข่าว วนหลายรอบ** ไม่ใช่ขอ 5 ข่าวในคำขอเดียว
+   * เพราะ 5 ชิ้นในคำขอเดียวชนเพดาน 60 วินาทีของ Vercel เป็นประจำ:
+   * วัดจริงจาก ai_call_logs ได้ AI ชิ้นเดียว p90 ~14 วิ — 5 ชิ้นก็ ~69 วิ เกินงบตั้งแต่
+   * ยังไม่นับเวลาโหลดหน้าเว็บ พอโดนตัดกลางคันผู้ใช้เห็นแค่ error ทั้งที่บางชิ้นสำเร็จไปแล้ว
+   *
+   * ยิงทีละชิ้นแล้วแต่ละคำขอใช้เวลา ~14 วิในกรณีแย่ ๆ เหลือ margin 4 เท่า
+   * และได้รายงานความคืบหน้าระหว่างทางฟรี ๆ (แพตเทิร์นเดียวกับปุ่มประมวลผล AI)
    */
   const runLongForm = useCallback(async () => {
     if (
@@ -250,32 +257,54 @@ export default function Home() {
       return;
     }
     setLongForming(true);
-    setMessage("✨ กำลังอ่านเนื้อข่าวจากเว็บจริงและเขียนแคปชันยาว...");
+    let generated = 0;
+    let skipped = 0;
+    let lastReason: string | null = null;
+    /**
+     * id ที่ลองแล้วไม่สำเร็จ ต้องส่งไปบอกเซิร์ฟเวอร์ทุกรอบ
+     * ไม่งั้นรอบถัดไปจะหยิบข่าวคะแนนสูงสุดตัวเดิมที่เพิ่งพังมาลองซ้ำจนครบทุกรอบ
+     */
+    const failed: number[] = [];
     try {
-      const res = await fetch("/api/articles/long-form", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topicId: selectedTopic }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(`❌ ${data.error ?? "เขียนแคปชันยาวไม่สำเร็จ"}`);
-        return;
+      for (let round = 0; round < MAX_LONG_FORM; round++) {
+        setMessage(
+          `✨ กำลังอ่านเว็บและเขียนแคปชันยาว... (${generated}/${MAX_LONG_FORM} ข่าว)`,
+        );
+        const res = await fetch("/api/articles/long-form", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topicId: selectedTopic, limit: 1, exclude: failed }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          lastReason = data.error ?? "เขียนแคปชันยาวไม่สำเร็จ";
+          break;
+        }
+
+        type Outcome = { articleId: number; ok: boolean; reason?: string };
+        const outcomes: Outcome[] = data.outcomes ?? [];
+        // ไม่มีผู้สมัครเหลือแล้ว — หยุด ไม่ต้องวนให้ครบรอบ
+        if (outcomes.length === 0) break;
+
+        generated += data.generated;
+        for (const o of outcomes.filter((x) => !x.ok)) {
+          skipped++;
+          failed.push(o.articleId);
+          lastReason = o.reason ?? lastReason;
+        }
+        // ได้ของแล้วรีเฟรชเลย ผู้ใช้จะได้เห็นทีละชิ้นแทนที่จะรอจนจบ
+        if (data.generated > 0) await reloadArticles();
       }
-      const skipReasons = (data.outcomes ?? [])
-        .filter((o: { ok: boolean }) => !o.ok)
-        .map((o: { reason?: string }) => o.reason)
-        .filter(Boolean);
-      setMessage(
-        data.generated === 0
-          ? `ไม่ได้เขียนแคปชันยาวเลย — ${skipReasons[0] ?? "ไม่มีข่าวที่เข้าเกณฑ์"}`
-          : `✨ เขียนแคปชันยาวสำเร็จ ${data.generated} ข่าว` +
-              (data.skipped > 0 ? ` (ข้าม ${data.skipped} ข่าวที่เปิดเว็บไม่ได้)` : ""),
-      );
-      await reloadArticles();
     } finally {
       setLongForming(false);
     }
+    setMessage(
+      generated === 0
+        ? `ไม่ได้เขียนแคปชันยาวเลย — ${lastReason ?? "ไม่มีข่าวที่เข้าเกณฑ์"}`
+        : `✨ เขียนแคปชันยาวสำเร็จ ${generated} ข่าว` +
+            (skipped > 0 ? ` (ข้าม ${skipped} ข่าว: ${lastReason})` : ""),
+    );
+    await reloadArticles();
   }, [selectedTopic, reloadArticles]);
 
   // ระหว่างดึง: poll สถานะทุก 2 วินาทีจนจบ สรุปผล แล้วส่งต่อให้ AI ประมวลผลอัตโนมัติ

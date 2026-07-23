@@ -12,6 +12,14 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
+ * เพดานจำนวน id ที่รับใน exclude
+ *
+ * หน้าเว็บกดหนึ่งครั้งลองได้มากสุด MAX_LONG_FORM รอบ แต่ละรอบเซิร์ฟเวอร์ไล่ผู้สมัครได้
+ * หลายชิ้น จึงเผื่อไว้กว้าง ๆ — เกินกว่านี้แปลว่ามีคนยิง API เอง ไม่ใช่หน้าเว็บ
+ */
+const MAX_EXCLUDE = 100;
+
+/**
  * POST /api/articles/long-form — เขียนแคปชันแบบยาวให้ข่าวเด่นสูงสุด 5 ชิ้น
  * body: { topicId?: number | "all", limit?: number }
  *
@@ -24,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ต้องล็อกอินก่อน" }, { status: 401 });
   }
 
-  let body: { topicId?: unknown; limit?: unknown } = {};
+  let body: { topicId?: unknown; limit?: unknown; exclude?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -52,6 +60,22 @@ export async function POST(req: NextRequest) {
     limit = Math.min(parsed, MAX_LONG_FORM);
   }
 
-  const result = await generateLongFormCaptions({ userId, topicId, limit });
+  /**
+   * id ที่รอบก่อน ๆ ลองแล้วไม่สำเร็จ — หน้าเว็บสะสมมาให้ (ดู runLongForm ใน src/app/page.tsx)
+   * จำกัดจำนวนไว้กัน payload บวมและกัน SQL `not in (...)` ยาวเกินเหตุ
+   */
+  let excludeIds: number[] | undefined;
+  if (body.exclude !== undefined) {
+    if (!Array.isArray(body.exclude)) {
+      return NextResponse.json({ error: "exclude ต้องเป็น array" }, { status: 400 });
+    }
+    const ids = body.exclude.map(Number).filter(Number.isInteger);
+    if (ids.length !== body.exclude.length) {
+      return NextResponse.json({ error: "exclude ต้องเป็นตัวเลขทั้งหมด" }, { status: 400 });
+    }
+    excludeIds = ids.slice(0, MAX_EXCLUDE);
+  }
+
+  const result = await generateLongFormCaptions({ userId, topicId, limit, excludeIds });
   return NextResponse.json({ ...result, max: MAX_LONG_FORM });
 }

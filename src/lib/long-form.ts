@@ -8,7 +8,7 @@
  * ทำไมต้องอ่านเว็บจริง: RSS ให้แค่พาดหัว + เนื้อหาย่อ ถ้าสั่ง AI เขียนยาวจากแค่นั้น
  * มันจะแต่งข้อมูลขึ้นมาเติมให้ครบความยาว ซึ่งรับไม่ได้สำหรับคอนเทนต์ข่าว
  */
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { articles, topics, type ArticleStatus } from "@/db/schema";
 import { isDraftStatus } from "./article-status";
@@ -28,12 +28,22 @@ export { MAX_LONG_FORM } from "./long-form-policy";
  */
 const CANDIDATE_MULTIPLIER = 4;
 
+/**
+ * งบเวลาเริ่มงานชิ้นใหม่ ต่อ 1 คำขอ — ตั้งต่ำกว่า maxDuration (60s) ไว้เผื่อชิ้นที่กำลังทำอยู่
+ *
+ * ตัวเลขจากของจริง: AI ชิ้นเดียว p90 ~14s (สถิติใน ai_call_logs) + โหลดเว็บ ~1.5s
+ * เริ่มชิ้นใหม่ตอนนาทีที่ 40 จึงยังจบทันในกรณีแย่ ๆ
+ */
+const DEFAULT_BUDGET_MS = 40_000;
+
 export type LongFormOutcome = {
   articleId: number;
   title: string;
   ok: boolean;
   /** เหตุผลที่ข้าม (เมื่อ ok = false) */
   reason?: string;
+  /** true = ไม่ได้ลองด้วยซ้ำเพราะเวลาจะหมด — ยังมีสิทธิ์ถูกเลือกใหม่รอบหน้า */
+  outOfTime?: boolean;
 };
 
 export type LongFormResult = {
@@ -71,6 +81,14 @@ export async function selectLongFormCandidates(input: {
   userId: number;
   topicId?: number | "all";
   limit: number;
+  /**
+   * ข่าวที่เพิ่งลองแล้วไม่สำเร็จในรอบก่อน ๆ ของการกดปุ่มครั้งเดียวกัน
+   *
+   * จำเป็นเพราะหน้าเว็บยิงทีละชิ้นหลายรอบ (กัน timeout) แต่ละรอบเป็นคำขออิสระที่ไม่มี
+   * ความทรงจำร่วมกัน ถ้าไม่บอกว่าตัวไหนพังไปแล้ว รอบถัดไปจะหยิบตัวเดิมที่คะแนนสูงสุด
+   * มาลองซ้ำจนครบทุกรอบ แล้วไม่ได้อะไรเลยสักชิ้น
+   */
+  excludeIds?: number[];
 }): Promise<Candidate[]> {
   const conditions = [
     eq(topics.userId, input.userId),
@@ -79,6 +97,9 @@ export async function selectLongFormCandidates(input: {
   ];
   if (input.topicId !== undefined && input.topicId !== "all") {
     conditions.push(eq(articles.topicId, input.topicId));
+  }
+  if (input.excludeIds?.length) {
+    conditions.push(notInArray(articles.id, input.excludeIds));
   }
 
   return db
@@ -198,12 +219,24 @@ export async function generateLongFormCaptions(input: {
   userId: number;
   topicId?: number | "all";
   limit?: number;
+  excludeIds?: number[];
+  /**
+   * เวลาที่ยอมให้ "เริ่ม" ข่าวชิ้นใหม่ได้ นับจากเริ่มฟังก์ชัน
+   *
+   * ไม่ได้ตัดงานที่ทำค้างอยู่ (จะเสียของ) แค่ไม่เริ่มชิ้นใหม่เมื่อเวลาใกล้หมด
+   * มีไว้กันชั้นสุดท้าย: คืนผลบางส่วนพร้อมเหตุผล ดีกว่าปล่อยให้ Vercel ตัดทิ้งทั้งคำขอ
+   * แล้วผู้ใช้เห็นแค่ error โดยไม่รู้ว่ามีชิ้นไหนสำเร็จไปแล้วบ้าง
+   */
+  budgetMs?: number;
 }): Promise<LongFormResult> {
+  const startedAt = Date.now();
+  const budgetMs = input.budgetMs ?? DEFAULT_BUDGET_MS;
   const limit = Math.min(Math.max(1, input.limit ?? MAX_LONG_FORM), MAX_LONG_FORM);
   const candidates = await selectLongFormCandidates({
     userId: input.userId,
     topicId: input.topicId,
     limit: limit * CANDIDATE_MULTIPLIER,
+    excludeIds: input.excludeIds,
   });
 
   const outcomes: LongFormOutcome[] = [];
@@ -211,6 +244,16 @@ export async function generateLongFormCaptions(input: {
 
   for (const c of candidates) {
     if (generated >= limit) break;
+    if (Date.now() - startedAt >= budgetMs) {
+      outcomes.push({
+        articleId: c.id,
+        title: c.title,
+        ok: false,
+        reason: "หยุดก่อนหมดเวลาของคำขอ — กดอีกครั้งเพื่อทำต่อ",
+        outOfTime: true,
+      });
+      break;
+    }
     const res = await writeLongCaption(c);
     if (res.ok) {
       generated++;
