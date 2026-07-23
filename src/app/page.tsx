@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArticleCard, type ArticleRow } from "@/components/ArticleCard";
 import { STATUS_META, STATUS_ORDER, statusLabel } from "@/lib/article-status";
 import type { ArticleCounts } from "@/lib/article-counts";
-import { MAX_REPROCESS } from "@/lib/reprocess-policy";
+import { MAX_REPROCESS, REPROCESSABLE } from "@/lib/reprocess-policy";
 import { MAX_LONG_FORM } from "@/lib/long-form-policy";
 
 type Topic = {
@@ -393,20 +393,34 @@ export default function Home() {
 
   // ใช้ยอดจากเซิร์ฟเวอร์ ไม่ใช่ articleRows — รายการถูกจำกัด 200 แถวและถูกกรองตามแท็บอยู่
   const pendingCount = counts.fetched ?? 0;
-  // ปุ่มลบยกเข่งโผล่เฉพาะแท็บที่ลบยกเข่งได้ (ดู BULK_DELETABLE ใน src/lib/bulk-delete.ts)
+  /**
+   * กติกาเดียวของทุกปุ่มลงมือทำ: **โผล่เฉพาะแท็บที่มองเห็นของที่มันจะไปแตะ**
+   *
+   * เดิมปุ่มพวกนี้กองอยู่แถบบนสุด โผล่/หายตามยอดข่าวโดยไม่สนว่าเปิดแท็บไหนอยู่
+   * ผลคือยืนอยู่แท็บ "โพสแล้ว" แต่เห็นปุ่ม "ประมวลผลใหม่ทั้งหมด (2)" — กดแล้วของที่เปลี่ยน
+   * อยู่คนละแท็บ จอตรงหน้าไม่ขยับสักนิด แถมแถบบนยังเด้งสูงต่ำจนเลย์เอาต์ขยับตามไปด้วย
+   *
+   * ตอนนี้ย้ายลงมาอยู่กับหัวรายการของแต่ละแท็บ กดแล้วเห็นผลในจอเดียวกันทันที
+   * แท็บ "ทั้งหมด" เห็นทุกปุ่มเพราะมองเห็นข่าวทุกสถานะอยู่จริง
+   */
+  const inScope = (s: string) => statusFilter === "all" || statusFilter === s;
+  const canProcess = inScope("fetched") && pendingCount > 0;
+  // ผู้สมัครของการเขียนยาวคือ status='draft' เท่านั้น (ดู selectLongFormCandidates)
+  const canLongForm = inScope("draft") && (counts.draft ?? 0) > 0;
+  // นับเฉพาะสถานะที่ทั้ง "ประมวลผลใหม่ได้" และ "มองเห็นอยู่ในแท็บนี้"
+  const reprocessCount = REPROCESSABLE.filter(inScope).reduce(
+    (n, s) => n + (counts[s] ?? 0),
+    0,
+  );
+  /**
+   * ลบยกเข่งไม่ตามกติกา inScope — จงใจไม่ให้โผล่ในแท็บ "ทั้งหมด"
+   * ปุ่มลบถาวรที่กดได้จากหน้าที่เห็นข่าวทุกสถานะปนกัน อันตรายเกินกว่าจะแลกกับความสะดวก
+   * (ดู BULK_DELETABLE ใน src/lib/bulk-delete.ts)
+   */
   const bulkCount =
     statusFilter === "irrelevant" || statusFilter === "rejected"
       ? (counts[statusFilter] ?? 0)
       : 0;
-  // ปุ่มประมวลผลใหม่: แท็บ draft/irrelevant ใช้ยอดแท็บนั้น, แท็บอื่นรวมสองสถานะที่ทำได้
-  // ยกเว้นแท็บ "ร่างยาว" — ซ่อนไปเลย เพราะปุ่มจะไม่แตะอะไรในแท็บนี้สักชิ้น
-  // (ดูเหตุผลที่ไม่ให้ประมวลผลใหม่ยกเข่งได้ที่ REPROCESSABLE ใน src/lib/reprocess-policy.ts)
-  const reprocessCount =
-    statusFilter === "draft_long"
-      ? 0
-      : statusFilter === "draft" || statusFilter === "irrelevant"
-        ? (counts[statusFilter] ?? 0)
-        : (counts.draft ?? 0) + (counts.irrelevant ?? 0);
   const shownTotal =
     counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
   // API คืนได้สูงสุด 200 แถว — ถ้ายอดจริงมากกว่าที่ได้มา แปลว่ารายการถูกตัด
@@ -448,53 +462,6 @@ export default function Home() {
           >
             {fetching ? "⏳ กำลังดึงข่าว..." : "🔄 ดึงข่าวทันที"}
           </button>
-
-          {pendingCount > 0 && (
-            <button
-              onClick={startProcessing}
-              disabled={fetching || processing}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {processing
-                ? "⏳ AI กำลังประมวลผล..."
-                : `🤖 ประมวลผล AI (ค้าง ${pendingCount})`}
-            </button>
-          )}
-
-          {(counts.draft ?? 0) > 0 && (
-            <button
-              onClick={runLongForm}
-              disabled={fetching || processing || reprocessing || longForming}
-              className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-              title={`ให้ AI เลือกข่าวเด่นสูงสุด ${MAX_LONG_FORM} ข่าว ไปอ่านเนื้อจากเว็บจริง แล้วเขียนแคปชันแบบยาว`}
-            >
-              {longForming ? "⏳ กำลังอ่านเว็บ..." : `✨ เขียนยาว ${MAX_LONG_FORM} ข่าวเด่น`}
-            </button>
-          )}
-
-          {reprocessCount > 0 && (
-            <button
-              onClick={bulkReprocess}
-              disabled={fetching || processing || reprocessing || bulkDeleting}
-              className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:text-indigo-400 dark:hover:bg-indigo-950"
-              title={`ให้ AI เขียนแคปชันใหม่ทั้งหมด (สูงสุด ${MAX_REPROCESS} ข่าวต่อครั้ง) — ไม่แตะข่าวที่อนุมัติ/โพสแล้ว`}
-            >
-              {reprocessing
-                ? "⏳ กำลังตั้งคิว..."
-                : `♻️ ประมวลผลใหม่ทั้งหมด (${Math.min(reprocessCount, MAX_REPROCESS)})`}
-            </button>
-          )}
-
-          {bulkCount > 0 && (
-            <button
-              onClick={bulkDelete}
-              disabled={fetching || processing || bulkDeleting}
-              className="ml-auto rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
-              title="ลบข่าวทั้งหมดในแท็บนี้ พร้อมบล็อกไม่ให้ถูกดึงกลับมาอีก"
-            >
-              {bulkDeleting ? "⏳ กำลังลบ..." : `🗑️ ลบทั้งหมด (${bulkCount})`}
-            </button>
-          )}
         </div>
 
         {message && (
@@ -560,17 +527,69 @@ export default function Home() {
       </div>
 
       <section>
-        <h2 className="mb-3 flex flex-wrap items-baseline gap-x-2 text-lg font-semibold">
-          {statusFilter === "all" ? "ข่าวทั้งหมด" : statusLabel(statusFilter)}
-          <span className="text-sm font-normal text-gray-500">
-            {/* บอกตามจริงเมื่อรายการถูกตัด — เดิมโชว์ "200 รายการ" ทั้งที่มีมากกว่านั้น */}
-            {loadingArticles
-              ? "กำลังโหลด..."
-              : truncated
-                ? `แสดง ${articleRows.length} จาก ${shownTotal} รายการ`
-                : `${shownTotal} รายการ`}
-          </span>
-        </h2>
+        {/* หัวรายการ + ปุ่มลงมือทำของแท็บนี้ อยู่บรรทัดเดียวกัน เพื่อผูกปุ่มเข้ากับของที่มันแตะ */}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h2 className="flex flex-wrap items-baseline gap-x-2 text-lg font-semibold">
+            {statusFilter === "all" ? "ข่าวทั้งหมด" : statusLabel(statusFilter)}
+            <span className="text-sm font-normal text-gray-500">
+              {/* บอกตามจริงเมื่อรายการถูกตัด — เดิมโชว์ "200 รายการ" ทั้งที่มีมากกว่านั้น */}
+              {loadingArticles
+                ? "กำลังโหลด..."
+                : truncated
+                  ? `แสดง ${articleRows.length} จาก ${shownTotal} รายการ`
+                  : `${shownTotal} รายการ`}
+            </span>
+          </h2>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {canProcess && (
+              <button
+                onClick={startProcessing}
+                disabled={fetching || processing}
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {processing
+                  ? "⏳ AI กำลังประมวลผล..."
+                  : `🤖 ประมวลผล AI (ค้าง ${pendingCount})`}
+              </button>
+            )}
+
+            {canLongForm && (
+              <button
+                onClick={runLongForm}
+                disabled={fetching || processing || reprocessing || longForming}
+                className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title={`ให้ AI เลือกข่าวเด่นสูงสุด ${MAX_LONG_FORM} ข่าว ไปอ่านเนื้อจากเว็บจริง แล้วเขียนแคปชันแบบยาว`}
+              >
+                {longForming ? "⏳ กำลังอ่านเว็บ..." : `✨ เขียนยาว ${MAX_LONG_FORM} ข่าวเด่น`}
+              </button>
+            )}
+
+            {reprocessCount > 0 && (
+              <button
+                onClick={bulkReprocess}
+                disabled={fetching || processing || reprocessing || bulkDeleting}
+                className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:text-indigo-400 dark:hover:bg-indigo-950"
+                title={`ให้ AI เขียนแคปชันใหม่ทั้งหมด (สูงสุด ${MAX_REPROCESS} ข่าวต่อครั้ง) — ไม่แตะข่าวที่อนุมัติ/โพสแล้ว`}
+              >
+                {reprocessing
+                  ? "⏳ กำลังตั้งคิว..."
+                  : `♻️ ประมวลผลใหม่ทั้งหมด (${Math.min(reprocessCount, MAX_REPROCESS)})`}
+              </button>
+            )}
+
+            {bulkCount > 0 && (
+              <button
+                onClick={bulkDelete}
+                disabled={fetching || processing || bulkDeleting}
+                className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+                title="ลบข่าวทั้งหมดในแท็บนี้ พร้อมบล็อกไม่ให้ถูกดึงกลับมาอีก"
+              >
+                {bulkDeleting ? "⏳ กำลังลบ..." : `🗑️ ลบทั้งหมด (${bulkCount})`}
+              </button>
+            )}
+          </div>
+        </div>
         {loadingArticles && articleRows.length === 0 ? (
           /* ยังไม่มีอะไรให้โชว์ — ขึ้นโครงหลอกไว้ก่อน ดีกว่าจอว่างที่ดูเหมือนไม่มีข่าว */
           <ul className="space-y-3" aria-busy="true" aria-label="กำลังโหลดรายการข่าว">

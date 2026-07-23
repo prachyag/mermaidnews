@@ -384,7 +384,12 @@ export function ArticleCard({
 
       {!editing && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {article.caption && (
+          {/*
+            ร่าง (ทั้งสองแบบ) ยังไม่ผ่านการตรวจ — ซ่อนปุ่มคัดลอกไว้ก่อน
+            ไม่งั้นจะคัดลอกของที่ยังไม่อนุมัติไปโพสได้ในคลิกเดียว ทั้งที่ทางเดินที่ตั้งใจไว้คือ
+            อนุมัติก่อนแล้วค่อยคัดลอก (สถานะบนการ์ดจะได้ตรงกับสิ่งที่ขึ้นเพจจริง)
+          */}
+          {article.caption && !isDraftStatus(article.status) && (
             <button
               onClick={copyPost}
               disabled={busy !== null}
@@ -513,7 +518,11 @@ export function ArticleCard({
             </button>
           )}
 
-          {(isDraftStatus(article.status) || article.status === "approved") && (
+          {/*
+            เฉพาะร่างเท่านั้น — ข่าวที่อนุมัติแล้วห้ามให้ AI เขียนทับแคปชันที่คนตรวจผ่านมาแล้ว
+            (ฝั่งเซิร์ฟเวอร์ก็ไม่ดึงกลับมาเป็นร่างให้ ดู writeLongCaption ใน src/lib/long-form.ts)
+          */}
+          {isDraftStatus(article.status) && (
             <button
               onClick={longForm}
               disabled={busy !== null}
