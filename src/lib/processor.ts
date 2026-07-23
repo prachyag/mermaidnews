@@ -1,14 +1,16 @@
 import { and, count, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { articles, topics } from "@/db/schema";
-import { getAiProvider } from "./ai/gemini";
+import { AI_MODEL_NAME, getAiProvider } from "./ai/gemini";
 import type { ArticleAssessment } from "./ai/provider";
+import { recordAiCall } from "./ai-stats";
 
 type PendingArticle = {
   id: number;
   title: string;
   description: string | null;
   source: string | null;
+  topicId: number;
   topicName: string;
   aiContext: string | null;
   captionStyle: string | null;
@@ -46,13 +48,41 @@ export async function processOneArticle(
   article: PendingArticle,
 ): Promise<{ relevant: boolean }> {
   const provider = getAiProvider();
-  const result = await provider.processArticle({
+  const startedAt = Date.now();
+  const stat = {
+    topicId: article.topicId,
     topicName: article.topicName,
-    aiContext: article.aiContext,
-    captionStyle: article.captionStyle,
-    title: article.title,
-    description: article.description,
-    source: article.source,
+    model: AI_MODEL_NAME,
+    mode: "single" as const,
+    requested: 1,
+  };
+
+  let result: ArticleAssessment;
+  try {
+    result = await provider.processArticle({
+      topicName: article.topicName,
+      aiContext: article.aiContext,
+      captionStyle: article.captionStyle,
+      title: article.title,
+      description: article.description,
+      source: article.source,
+    });
+  } catch (err) {
+    await recordAiCall({
+      ...stat,
+      returned: 0,
+      durationMs: Date.now() - startedAt,
+      ok: false,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    throw err; // ให้ route จัดการ error ต่อเหมือนเดิม — สถิติต้องไม่เปลี่ยนพฤติกรรม
+  }
+
+  await recordAiCall({
+    ...stat,
+    returned: 1,
+    durationMs: Date.now() - startedAt,
+    ok: true,
   });
 
   await applyAssessment(article.id, result);
@@ -161,6 +191,7 @@ export async function processPendingArticles(
     if (index > 0 && delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
 
     const head = batch[0];
+    const startedAt = Date.now();
     try {
       aiCalls++;
       const results = await provider.processArticleBatch({
@@ -173,6 +204,18 @@ export async function processPendingArticles(
           description: a.description,
           source: a.source,
         })),
+      });
+
+      // บันทึกสถิติ: returned < requested = AI ตอบไม่ครบ ซึ่งเป็นการเสื่อมที่ไม่ throw error
+      await recordAiCall({
+        topicId: head.topicId,
+        topicName: head.topicName,
+        model: AI_MODEL_NAME,
+        mode: "batch",
+        requested: batch.length,
+        returned: results.length,
+        durationMs: Date.now() - startedAt,
+        ok: true,
       });
 
       const byId = new Map(results.map((r) => [r.id, r]));
@@ -193,6 +236,17 @@ export async function processPendingArticles(
       failed += batch.length;
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`ประมวลผลชุด ${batch.length} ข่าวล้มเหลว:`, lastError);
+      await recordAiCall({
+        topicId: head.topicId,
+        topicName: head.topicName,
+        model: AI_MODEL_NAME,
+        mode: "batch",
+        requested: batch.length,
+        returned: 0,
+        durationMs: Date.now() - startedAt,
+        ok: false,
+        errorMessage: lastError,
+      });
     }
   }
 

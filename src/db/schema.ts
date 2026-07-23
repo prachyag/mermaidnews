@@ -203,6 +203,38 @@ export const blockedArticles = sqliteTable(
   (t) => [uniqueIndex("blocked_articles_topic_url_unique").on(t.topicId, t.url)],
 );
 
+/**
+ * สถิติการเรียก AI ทีละครั้ง — ไว้ดูว่าการต่อ AI กำลังเสื่อมก่อนที่จะพังสนิท
+ *
+ * ทำไมต้องมี: เหตุการณ์ 23 ก.ค. 2569 (ดู docs/POSTMORTEM-2026-07-23-*) ฟีเจอร์ AI ล่ม 100%
+ * โดยไม่มีใครรู้จนผู้ใช้มาแจ้ง และก่อนล่มจริงมีสัญญาณเตือนที่มองไม่เห็นคือ
+ * "ขอ 10 ข่าว ได้กลับมา 1" กับเวลาที่พุ่งจาก 4 เป็น 30 วินาที
+ *
+ * requested/returned จึงสำคัญกว่าแค่ ok/ไม่ ok — เพราะการเสื่อมแบบ "สำเร็จแต่ไม่ครบ"
+ * ไม่ throw error ใด ๆ ถ้าเก็บแค่สำเร็จ/ล้มเหลวจะมองไม่เห็นเลย
+ */
+export const aiCallLogs = sqliteTable("ai_call_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** null ได้เมื่อหัวข้อถูกลบ — สถิติต้องอยู่ต่อเพื่อดูแนวโน้มย้อนหลัง */
+  topicId: integer("topic_id").references(() => topics.id, { onDelete: "set null" }),
+  /** snapshot ชื่อหัวข้อ ให้อ่านรู้เรื่องแม้หัวข้อถูกลบไปแล้ว */
+  topicName: text("topic_name").notNull(),
+  /** ชื่อรุ่นที่ตั้งไว้ตอนเรียก — ถ้าเปลี่ยนรุ่นแล้วสถิติแย่ลง จะเห็นความสัมพันธ์ทันที */
+  model: text("model").notNull(),
+  /** batch = ชุดหลายข่าว, single = ประมวลผลซ้ำทีละข่าว */
+  mode: text("mode").$type<"batch" | "single">().notNull(),
+  /** จำนวนข่าวที่ส่งไป */
+  requested: integer("requested").notNull(),
+  /** จำนวนผลที่ได้กลับมาใช้ได้จริง — น้อยกว่า requested = สัญญาณเสื่อม */
+  returned: integer("returned").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  ok: integer("ok", { mode: "boolean" }).notNull(),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const fetchRuns = sqliteTable("fetch_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   topicId: integer("topic_id")
@@ -234,3 +266,5 @@ export type Topic = typeof topics.$inferSelect;
 export type Article = typeof articles.$inferSelect;
 export type BlockedArticle = typeof blockedArticles.$inferSelect;
 export type FetchRun = typeof fetchRuns.$inferSelect;
+export type AiCallLog = typeof aiCallLogs.$inferSelect;
+export type NewAiCallLog = typeof aiCallLogs.$inferInsert;

@@ -25,6 +25,8 @@ import type {
 const mockProcessArticle = vi.fn<(input: ProcessArticleInput) => Promise<ArticleAssessment>>();
 const mockProcessBatch = vi.fn<(input: ProcessBatchInput) => Promise<BatchAssessment[]>>();
 vi.mock("@/lib/ai/gemini", () => ({
+  // ต้องมีครบทุก export ที่ processor ใช้ ไม่งั้น vitest จะฟ้องว่า export หาย
+  AI_MODEL_NAME: "gemini-flash-latest",
   getAiProvider: (): AiProvider => ({
     processArticle: mockProcessArticle,
     processArticleBatch: mockProcessBatch,

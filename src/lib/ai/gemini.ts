@@ -11,6 +11,9 @@ import type {
 // ใช้ || ไม่ใช่ ?? เพราะ env ที่ตั้งเป็นสตริงว่างต้องตกมาที่ค่า default ด้วย (?? จะปล่อยผ่านแล้วยิงไปหา model "")
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
+/** ชื่อรุ่นที่ใช้อยู่จริง — เปิดให้ระบบสถิติบันทึกไว้ จะได้เห็นว่าสถิติเปลี่ยนตอนรุ่นเปลี่ยนไหม */
+export const AI_MODEL_NAME = MODEL;
+
 /**
  * งบ "คิดก่อนตอบ" (thinking) ต่อ 1 request
  *

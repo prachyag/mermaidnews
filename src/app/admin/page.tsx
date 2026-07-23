@@ -3,8 +3,10 @@ import { cookies } from "next/headers";
 import { resolveUserId, SESSION_COOKIE } from "@/lib/session";
 import { listUsers } from "@/lib/admin";
 import { AUDIT_LOG_MAX_ENTRIES, listAuditLog } from "@/lib/audit";
+import { listRecentAiCalls, summarizeAiCalls } from "@/lib/ai-stats";
 import { UserTable } from "./UserTable";
 import { AuditLog } from "./AuditLog";
+import { AiHealth } from "./AiHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,11 @@ export default async function AdminPage() {
   const result = await listUsers(userId);
   if (!result.ok) redirect("/");
   const audit = (await listAuditLog(userId)) ?? [];
+  const AI_STATS_HOURS = 24;
+  const [aiSummary, aiRecent] = await Promise.all([
+    summarizeAiCalls(userId, { sinceHours: AI_STATS_HOURS }),
+    listRecentAiCalls(userId, { sinceHours: AI_STATS_HOURS, limit: 20 }),
+  ]);
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-6">
@@ -24,6 +31,16 @@ export default async function AdminPage() {
         บัญชีที่สมัครใหม่จะอยู่สถานะ &quot;รออนุมัติ&quot; และใช้งานไม่ได้จนกว่าคุณจะอนุมัติ
       </p>
       <UserTable initial={result.data} meId={userId} />
+
+      <h2 className="mt-10 mb-1 text-lg font-bold">สุขภาพการเรียก AI</h2>
+      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+        ดูว่าการต่อ AI กำลังเสื่อมหรือยัง — จับทั้งกรณีล้มเหลว และกรณี{" "}
+        <span className="font-medium text-amber-600 dark:text-amber-400">
+          &quot;สำเร็จแต่ตอบกลับไม่ครบ&quot;
+        </span>{" "}
+        ซึ่งไม่มี error แจ้งเตือน
+      </p>
+      <AiHealth summary={aiSummary} recent={aiRecent} sinceHours={AI_STATS_HOURS} />
 
       <h2 className="mt-10 mb-1 text-lg font-bold">ประวัติการดำเนินการ</h2>
       <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">

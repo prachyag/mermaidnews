@@ -121,3 +121,19 @@ CREATE TABLE IF NOT EXISTS `fetch_runs` (
 	`error_message` text,
 	FOREIGN KEY (`topic_id`) REFERENCES `topics`(`id`) ON UPDATE no action ON DELETE cascade
 );
+
+-- ── ai_call_logs (อ้าง topics) — สถิติการเรียก AI ไว้ดูว่ากำลังเสื่อมหรือยัง ──
+CREATE TABLE IF NOT EXISTS `ai_call_logs` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`topic_id` integer,
+	`topic_name` text NOT NULL,
+	`model` text NOT NULL,
+	`mode` text NOT NULL,
+	`requested` integer NOT NULL,
+	`returned` integer NOT NULL,
+	`duration_ms` integer NOT NULL,
+	`ok` integer NOT NULL,
+	`error_message` text,
+	`created_at` integer NOT NULL,
+	FOREIGN KEY (`topic_id`) REFERENCES `topics`(`id`) ON UPDATE no action ON DELETE set null
+);

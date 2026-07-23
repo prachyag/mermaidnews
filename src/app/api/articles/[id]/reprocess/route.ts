@@ -34,6 +34,7 @@ export async function POST(
       title: article.title,
       description: article.description,
       source: article.source,
+      topicId: topic.id,
       topicName: topic.name,
       aiContext: topic.aiContext,
       captionStyle: topic.captionStyle,
