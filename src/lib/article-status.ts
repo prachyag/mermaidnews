@@ -14,6 +14,7 @@ import type { ArticleStatus } from "@/db/schema";
 export const STATUS_ORDER: ArticleStatus[] = [
   "fetched",
   "draft",
+  "draft_long",
   "approved",
   "scheduled",
   "posted",
@@ -45,6 +46,13 @@ export const STATUS_META: Record<ArticleStatus, StatusMeta> = {
     short: "ร่าง",
     badge: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
     dot: "bg-amber-500",
+  },
+  draft_long: {
+    label: "ร่างแบบยาว",
+    short: "ร่างยาว",
+    // ม่วง = สีเดียวกับปุ่ม "เขียนแคปชันยาว" ทุกที่ ผู้ใช้จะได้โยงได้ว่ามาจากปุ่มไหน
+    badge: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
+    dot: "bg-violet-500",
   },
   approved: {
     label: "อนุมัติแล้ว",
@@ -83,6 +91,22 @@ export const STATUS_META: Record<ArticleStatus, StatusMeta> = {
     dot: "bg-gray-300 dark:bg-gray-600",
   },
 };
+
+/**
+ * ร่างทั้งสองแบบ — ต่างกันแค่ที่มาของแคปชัน ไม่ใช่ขั้นตอนการทำงาน
+ *
+ * "draft" = AI เขียนจากพาดหัว + เนื้อย่อใน RSS
+ * "draft_long" = AI ไปโหลดหน้าเว็บสำนักข่าวจริงมาอ่านก่อนเขียน (แพงกว่ามาก)
+ *
+ * ทั้งคู่รอคนตรวจเหมือนกัน จึงต้องอนุมัติ/ปฏิเสธ/แก้แคปชันได้เท่ากัน
+ * มีตัวแปรกลางไว้เพื่อไม่ให้ต้องไล่เขียน `s === "draft" || s === "draft_long"` กระจายทั้งโปรเจกต์
+ * แล้วลืมที่ใดที่หนึ่ง (แบบที่สถานะ "failed" เคยหลุดจากตัวกรองมาแล้ว)
+ */
+export const DRAFT_STATUSES: ArticleStatus[] = ["draft", "draft_long"];
+
+export function isDraftStatus(status: string): boolean {
+  return DRAFT_STATUSES.includes(status as ArticleStatus);
+}
 
 export function statusLabel(status: string): string {
   return STATUS_META[status as ArticleStatus]?.label ?? status;

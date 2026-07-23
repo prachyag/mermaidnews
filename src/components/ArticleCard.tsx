@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { statusBadge, statusLabel } from "@/lib/article-status";
+import { isDraftStatus, statusBadge, statusLabel } from "@/lib/article-status";
 
 export type ArticleRow = {
   id: number;
@@ -399,7 +399,8 @@ export function ArticleCard({
             </button>
           )}
 
-          {article.status === "draft" && (
+          {/* ร่างยาวก็คือร่าง — ต้องอนุมัติ/แก้/ปฏิเสธได้เหมือนกัน ต่างแค่ที่มาของแคปชัน */}
+          {isDraftStatus(article.status) && (
             <>
               <button
                 onClick={() => patch({ status: "approved" }, "approve")}
@@ -512,7 +513,7 @@ export function ArticleCard({
             </button>
           )}
 
-          {(article.status === "draft" || article.status === "approved") && (
+          {(isDraftStatus(article.status) || article.status === "approved") && (
             <button
               onClick={longForm}
               disabled={busy !== null}

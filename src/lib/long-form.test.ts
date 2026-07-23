@@ -107,7 +107,15 @@ describe("selectLongFormCandidates", () => {
 
   it("เอาเฉพาะข่าวสถานะ draft — ไม่แตะที่อนุมัติ/โพส/ปฏิเสธแล้ว", async () => {
     const draft = await seed({ status: "draft" });
-    for (const s of ["approved", "posted", "rejected", "irrelevant", "fetched"] as ArticleStatus[]) {
+    // รวม draft_long ด้วย — ข่าวที่เขียนยาวไปแล้วต้องไม่ถูกเลือกซ้ำในรอบถัดไป
+    for (const s of [
+      "approved",
+      "posted",
+      "rejected",
+      "irrelevant",
+      "fetched",
+      "draft_long",
+    ] as ArticleStatus[]) {
       await seed({ status: s });
     }
     const got = await selectLongFormCandidates({ userId, limit: 10 });
@@ -150,6 +158,24 @@ describe("generateLongFormCaptions", () => {
     const after = await db.query.articles.findFirst({ where: eq(articles.id, a.id) });
     expect(after?.caption).toBe("แคปชันยาวที่เขียนจากเนื้อข่าวจริง");
     expect(after?.content).toBe("เนื้อข่าวเต็มจากเว็บจริง");
+    // แยกออกจากร่างปกติ ผู้ใช้จะได้เห็นด้วยตาว่าชิ้นไหนผ่านการอ่านเว็บจริงมาแล้ว
+    expect(after?.status).toBe("draft_long");
+  });
+
+  it("ร่างยาวรอบสองยังคงเป็นร่างยาว (ไม่เด้งกลับเป็นร่างปกติ)", async () => {
+    const a = await seed({ status: "draft_long", content: "เคยดึงแล้ว" });
+    await generateLongFormForArticle({ userId, articleId: a.id });
+    expect((await db.query.articles.findFirst({ where: eq(articles.id, a.id) }))?.status).toBe(
+      "draft_long",
+    );
+  });
+
+  it("สั่งเขียนยาวให้ข่าวที่อนุมัติแล้ว ต้องไม่ถอนการอนุมัติของคนทิ้ง", async () => {
+    const a = await seed({ status: "approved" });
+    expect(await generateLongFormForArticle({ userId, articleId: a.id })).toEqual({ ok: true });
+    const after = await db.query.articles.findFirst({ where: eq(articles.id, a.id) });
+    expect(after?.status).toBe("approved");
+    expect(after?.caption).toBe("แคปชันยาวที่เขียนจากเนื้อข่าวจริง");
   });
 
   it("ส่งเนื้อข่าวจริงให้ AI และสั่งโหมดเขียนยาว", async () => {

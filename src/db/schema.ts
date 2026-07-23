@@ -142,6 +142,7 @@ export type ArticleStatus =
   | "fetched" // ดึงเข้ามาแล้ว รอ AI ประมวลผล
   | "irrelevant" // AI ตัดสินว่าไม่เกี่ยวข้องกับหัวข้อ
   | "draft" // AI ร่างแคปชันแล้ว รอแอดมินตรวจ
+  | "draft_long" // ร่างที่ AI ไปอ่านเนื้อข่าวจากเว็บจริงแล้วเขียนแคปชันยาว (ดู src/lib/long-form.ts)
   | "approved"
   | "scheduled"
   | "posted"

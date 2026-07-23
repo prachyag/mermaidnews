@@ -201,7 +201,7 @@ export default function Home() {
       !confirm(
         `ให้ AI ประมวลผลข่าว "${label}" ใหม่ (สูงสุด ${MAX_REPROCESS} ข่าวต่อครั้ง)?\n\n` +
           "แคปชันและสรุปเดิมจะถูกเขียนทับด้วยผลใหม่ ถ้าเคยแก้แคปชันเองไว้จะหายไป\n" +
-          "ข่าวที่อนุมัติ/ตั้งเวลา/โพสแล้ว/ปฏิเสธ จะไม่ถูกแตะ",
+          "ข่าวที่อนุมัติ/ตั้งเวลา/โพสแล้ว/ปฏิเสธ และร่างแบบยาว จะไม่ถูกแตะ",
       )
     ) {
       return;
@@ -399,10 +399,14 @@ export default function Home() {
       ? (counts[statusFilter] ?? 0)
       : 0;
   // ปุ่มประมวลผลใหม่: แท็บ draft/irrelevant ใช้ยอดแท็บนั้น, แท็บอื่นรวมสองสถานะที่ทำได้
+  // ยกเว้นแท็บ "ร่างยาว" — ซ่อนไปเลย เพราะปุ่มจะไม่แตะอะไรในแท็บนี้สักชิ้น
+  // (ดูเหตุผลที่ไม่ให้ประมวลผลใหม่ยกเข่งได้ที่ REPROCESSABLE ใน src/lib/reprocess-policy.ts)
   const reprocessCount =
-    statusFilter === "draft" || statusFilter === "irrelevant"
-      ? (counts[statusFilter] ?? 0)
-      : (counts.draft ?? 0) + (counts.irrelevant ?? 0);
+    statusFilter === "draft_long"
+      ? 0
+      : statusFilter === "draft" || statusFilter === "irrelevant"
+        ? (counts[statusFilter] ?? 0)
+        : (counts.draft ?? 0) + (counts.irrelevant ?? 0);
   const shownTotal =
     counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
   // API คืนได้สูงสุด 200 แถว — ถ้ายอดจริงมากกว่าที่ได้มา แปลว่ารายการถูกตัด

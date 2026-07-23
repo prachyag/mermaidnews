@@ -17,7 +17,14 @@ type PendingArticle = {
   captionIncludeSummary: boolean;
 };
 
-/** เขียนผลประเมินของ AI ลงข่าวหนึ่งชิ้น — ใช้ร่วมกันทั้งทางเดินเดี่ยวและแบบชุด */
+/**
+ * เขียนผลประเมินของ AI ลงข่าวหนึ่งชิ้น — ใช้ร่วมกันทั้งทางเดินเดี่ยวและแบบชุด
+ *
+ * ล้าง content ทิ้งเสมอ เพราะรอบนี้เขียนแคปชันจากพาดหัว+เนื้อย่อของ RSS เท่านั้น
+ * ถ้าปล่อยเนื้อข่าวเต็มค้างไว้ ระบบจะยังนึกว่าข่าวนี้ "ผ่านการอ่านเว็บจริงแล้ว"
+ * ทั้งที่แคปชันปัจจุบันไม่ได้มาจากมัน (ดู isNull(content) ใน long-form.ts
+ * และการย้อนสถานะใน api/articles/[id]/route.ts ที่ตัดสินจากค่านี้)
+ */
 async function applyAssessment(
   articleId: number,
   result: ArticleAssessment,
@@ -33,11 +40,13 @@ async function applyAssessment(
             summary: result.summary,
             caption: result.caption,
             hashtags: result.hashtags,
+            content: null,
           }
         : {
             status: "irrelevant",
             relevanceScore: result.relevanceScore,
             interestScore: result.interestScore,
+            content: null,
           },
     )
     .where(eq(articles.id, articleId));

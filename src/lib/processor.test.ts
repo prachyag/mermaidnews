@@ -130,6 +130,14 @@ describe("processPendingArticles — ผลลัพธ์ลงข่าวถ�
     expect(row.relevanceScore).toBeCloseTo(0.8);
   });
 
+  it("ประมวลผลใหม่ทับแคปชันยาว ต้องล้างเนื้อข่าวเต็มทิ้งด้วย", async () => {
+    // ถ้าปล่อย content ค้าง ระบบจะยังนึกว่าข่าวนี้ผ่านการอ่านเว็บจริงแล้ว
+    // ทั้งที่แคปชันปัจจุบันเขียนจากแค่พาดหัว/เนื้อย่อ — แล้วจะไม่มีวันถูกเลือกเขียนยาวอีก
+    const a = await seedArticle({ content: "เนื้อข่าวเต็มจากรอบเขียนยาว" });
+    await processPendingArticles(topicId, 5, userId, { delayMs: 0 });
+    expect((await statusOf(a.id)).content).toBeNull();
+  });
+
   it("ข่าวที่ไม่เกี่ยวข้อง -> irrelevant และไม่เก็บแคปชัน", async () => {
     const a = await seedArticle();
     mockProcessBatch.mockImplementation(

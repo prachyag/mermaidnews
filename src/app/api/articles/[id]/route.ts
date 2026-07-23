@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 const EDITABLE_STATUSES: ArticleStatus[] = [
   "fetched",
   "draft",
+  "draft_long",
   "approved",
   "rejected",
 ];
@@ -29,7 +30,8 @@ export async function PATCH(
   if (!Number.isInteger(id)) {
     return NextResponse.json({ error: "id ไม่ถูกต้อง" }, { status: 400 });
   }
-  if (!(await getOwnedArticle(userId, id))) {
+  const owned = await getOwnedArticle(userId, id);
+  if (!owned) {
     return NextResponse.json({ error: "ไม่พบข่าวนี้" }, { status: 404 });
   }
 
@@ -59,6 +61,16 @@ export async function PATCH(
       );
     }
     updates.status = body.status as ArticleStatus;
+    /**
+     * "ย้อนเป็นร่าง" / "กู้คืนเป็นร่าง" ต้องกลับเข้าแท็บเดิมที่ข่าวมาจาก
+     *
+     * ฝั่งหน้าเว็บส่ง "draft" มาอย่างเดียวโดยไม่ต้องรู้ว่าข่าวนี้เคยเขียนยาวไว้หรือเปล่า
+     * เซิร์ฟเวอร์ตัดสินจาก content (มีค่า = เคยโหลดหน้าเว็บจริงมาเขียนแล้ว)
+     * ไม่งั้นข่าวที่ลงแรงเขียนยาวไปแล้วจะไหลไปกองรวมในแท็บร่างปกติ แล้วหาไม่เจอ
+     */
+    if (updates.status === "draft" && owned.article.content) {
+      updates.status = "draft_long";
+    }
   }
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "ไม่มีข้อมูลให้แก้ไข" }, { status: 400 });

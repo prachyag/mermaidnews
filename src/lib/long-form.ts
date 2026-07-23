@@ -10,7 +10,8 @@
  */
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { articles, topics } from "@/db/schema";
+import { articles, topics, type ArticleStatus } from "@/db/schema";
+import { isDraftStatus } from "./article-status";
 import { fetchArticleContent } from "./article-content";
 import { isGoogleNewsUrl, resolveArticleUrl } from "./resolve-url";
 import { AI_MODEL_NAME, getAiProvider } from "./ai/gemini";
@@ -50,6 +51,7 @@ type Candidate = {
   resolvedUrl: string | null;
   description: string | null;
   source: string | null;
+  status: ArticleStatus;
   topicId: number;
   topicName: string;
   aiContext: string | null;
@@ -87,6 +89,7 @@ export async function selectLongFormCandidates(input: {
       resolvedUrl: articles.resolvedUrl,
       description: articles.description,
       source: articles.source,
+      status: articles.status,
       topicId: articles.topicId,
       topicName: topics.name,
       aiContext: topics.aiContext,
@@ -164,6 +167,13 @@ async function writeLongCaption(c: Candidate): Promise<{ ok: true } | { ok: fals
         hashtags: result.hashtags,
         // เก็บเนื้อข่าวไว้ = เครื่องหมายว่าทำแล้ว + สั่งเขียนใหม่ได้โดยไม่ต้องรบกวนเว็บต้นทางซ้ำ
         content: content.text,
+        /**
+         * แยกออกจากร่างปกติเพื่อให้เห็นด้วยตาว่าชิ้นไหนผ่านการอ่านเว็บจริงมาแล้ว
+         *
+         * ตั้งได้เฉพาะจากร่าง — ถ้าสั่งเขียนยาวให้ข่าวที่ "อนุมัติแล้ว" (ปุ่มรายชิ้นทำได้)
+         * ห้ามดึงกลับมาเป็นร่าง ไม่งั้นการอนุมัติของคนจะถูกระบบถอนเงียบ ๆ
+         */
+        ...(isDraftStatus(c.status) ? { status: "draft_long" as const } : {}),
       })
       .where(eq(articles.id, c.id));
     return { ok: true };
@@ -226,6 +236,7 @@ export async function generateLongFormForArticle(input: {
       resolvedUrl: articles.resolvedUrl,
       description: articles.description,
       source: articles.source,
+      status: articles.status,
       topicId: articles.topicId,
       topicName: topics.name,
       aiContext: topics.aiContext,
