@@ -193,7 +193,6 @@ async function attemptLongCaption(c: Candidate): Promise<Attempt> {
       topicName: c.topicName,
       aiContext: c.aiContext,
       captionStyle: c.captionStyle,
-      captionIncludeSummary: true,
       title: c.title,
       description: c.description,
       source: c.source,

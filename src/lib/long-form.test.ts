@@ -212,15 +212,14 @@ describe("generateLongFormCaptions", () => {
     expect(after?.caption).toBe("แคปชันยาวที่เขียนจากเนื้อข่าวจริง");
   });
 
-  it("ส่งเนื้อข่าวจริงให้ AI และสั่งโหมดเขียนยาว", async () => {
+  // content คือตัวสั่งโหมดเขียนยาวในตัวมันเอง (ดู captionInstruction ใน ai/gemini.ts)
+  // ไม่มีสวิตช์แยกอีกแล้ว — ขอความยาวเกินกว่าวัตถุดิบที่มีจริงจึงเป็นไปไม่ได้
+  it("ส่งเนื้อข่าวจริงให้ AI (= สั่งโหมดเขียนยาวในตัว)", async () => {
     await seed();
     await generateLongFormCaptions({ userId, limit: 1 });
 
     expect(mockProcessArticle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        captionIncludeSummary: true,
-        content: "เนื้อข่าวเต็มจากเว็บจริง",
-      }),
+      expect.objectContaining({ content: "เนื้อข่าวเต็มจากเว็บจริง" }),
     );
   });
 

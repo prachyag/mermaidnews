@@ -11,7 +11,6 @@ type Topic = {
   keywords: string[];
   aiContext: string | null;
   captionStyle: string | null;
-  captionIncludeSummary: boolean;
   newsSource: NewsSource;
   fbPageId: string | null;
   hasFbToken: boolean;
@@ -29,7 +28,6 @@ type TopicForm = {
   keywords: string;
   aiContext: string;
   captionStyle: string;
-  captionIncludeSummary: boolean;
   newsSource: NewsSource;
   fbPageId: string;
   /** ค่าที่พิมพ์ใหม่เท่านั้น — เว้นว่าง = คง token เดิม (client ไม่เคยได้ token กลับมา) */
@@ -41,7 +39,6 @@ const EMPTY_FORM: TopicForm = {
   keywords: "",
   aiContext: "",
   captionStyle: "",
-  captionIncludeSummary: false,
   newsSource: "auto",
   fbPageId: "",
   fbPageToken: "",
@@ -53,7 +50,6 @@ function toForm(t: Topic): TopicForm {
     keywords: t.keywords.join(", "),
     aiContext: t.aiContext ?? "",
     captionStyle: t.captionStyle ?? "",
-    captionIncludeSummary: t.captionIncludeSummary ?? false,
     newsSource: t.newsSource ?? "auto",
     fbPageId: t.fbPageId ?? "",
     fbPageToken: "",
@@ -69,7 +65,6 @@ function toBody(form: TopicForm) {
       .filter(Boolean),
     aiContext: form.aiContext,
     captionStyle: form.captionStyle,
-    captionIncludeSummary: form.captionIncludeSummary,
     newsSource: form.newsSource,
     fbPageId: form.fbPageId,
     // ส่ง token เฉพาะเมื่อพิมพ์ค่าใหม่ ไม่งั้นไม่แตะ (กันเผลอล้างของเดิม)
@@ -303,26 +298,6 @@ export default function TopicsPage() {
           />
         </div>
         <div>
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-gray-300 p-3 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800">
-            <input
-              type="checkbox"
-              checked={form.captionIncludeSummary}
-              onChange={(e) =>
-                setForm({ ...form, captionIncludeSummary: e.target.checked })
-              }
-              className="mt-0.5"
-            />
-            <span className="text-sm">
-              <span className="font-medium">สรุปเนื้อหาข่าวเต็ม ๆ ลงในแคปชัน</span>
-              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
-                {form.captionIncludeSummary
-                  ? "แคปชันจะเล่าเนื้อข่าวให้ครบในตัว ไม่จำกัดความยาว คนอ่านได้ใจความโดยไม่ต้องกดลิงก์ (AI จะไม่แต่งข้อมูลเกินจากข่าวต้นทาง)"
-                  : "แคปชันจะสั้น 1–2 ประโยค เกริ่นให้น่าสนใจแล้วชวนกดลิงก์อ่านต่อ"}
-              </span>
-            </span>
-          </label>
-        </div>
-        <div>
           <div className="mb-4 rounded-xl">
             <h2 className="font-semibold">โพสเฟสบุกอัตโนมัติ</h2>
           </div>
@@ -484,7 +459,6 @@ export default function TopicsPage() {
                 </p>
                 {t.aiContext && <p>🎯 บริบท AI: {t.aiContext}</p>}
                 {t.captionStyle && <p>✏️ สไตล์แคปชัน: {t.captionStyle}</p>}
-                {t.captionIncludeSummary && <p>📝 แคปชันสรุปเนื้อหาข่าวเต็ม</p>}
                 {t.fbPageId ? (
                   <p>📘 Facebook Page ID: {t.fbPageId}</p>
                 ) : (

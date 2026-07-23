@@ -77,18 +77,12 @@ export const topics = sqliteTable("topics", {
   keywords: text("keywords", { mode: "json" }).$type<string[]>().notNull(),
   aiContext: text("ai_context"),
   captionStyle: text("caption_style"),
-  /**
-   * ให้แคปชันพร้อมโพสสรุปเนื้อหาข่าวเต็ม ๆ ลงไปด้วยหรือไม่
-   *
-   * false (ค่าเริ่มต้น = พฤติกรรมเดิม): แคปชันสั้น เกริ่นชวนให้คลิกอ่านต่อจากลิงก์
-   * true: แคปชันเล่าสาระข่าวให้ครบในตัว คนอ่านได้ใจความโดยไม่ต้องกดลิงก์
-   *
-   * ต่างจากฟิลด์ summary ของข่าวตรงที่ summary ใช้ดูบนแดชบอร์ดเท่านั้น ไม่ได้ถูกโพส
-   * ตัวที่ขึ้นเพจจริงคือ caption + hashtags (ดู publish route)
+  /*
+   * เคยมี captionIncludeSummary ตรงนี้ — สวิตช์ต่อหัวข้อว่าให้แคปชันเล่าเนื้อข่าวเต็มไหม
+   * ถอดออกเพราะมันสั่งให้ AI "เขียนยาวไม่จำกัด" จากวัตถุดิบที่มีแค่พาดหัว + เนื้อย่อ RSS
+   * ซึ่งคือการเชิญชวนให้แต่งเติมโดยตรง ความยาวตัดสินจากการมีเนื้อข่าวจริงแทน
+   * (ดู captionInstruction ใน src/lib/ai/gemini.ts)
    */
-  captionIncludeSummary: integer("caption_include_summary", { mode: "boolean" })
-    .notNull()
-    .default(false),
   /** แหล่งข่าวที่จะดึง (ดู NewsSource) — default auto = พฤติกรรมเดิมก่อนมีตัวเลือกนี้ */
   newsSource: text("news_source").$type<NewsSource>().notNull().default("auto"),
   fbPageId: text("fb_page_id"),

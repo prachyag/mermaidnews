@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS `topics` (
 	`keywords` text NOT NULL,
 	`ai_context` text,
 	`caption_style` text,
-	`caption_include_summary` integer DEFAULT false NOT NULL,
 	`news_source` text DEFAULT 'auto' NOT NULL,
 	`fb_page_id` text,
 	`fb_page_token` text,

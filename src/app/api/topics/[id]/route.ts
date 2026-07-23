@@ -34,7 +34,6 @@ export async function PATCH(
     fbPageId?: string | null;
     fbPageToken?: string;
     newsSource?: string;
-    captionIncludeSummary?: boolean;
     cronSchedule?: string;
     enabled?: boolean;
   };
@@ -70,8 +69,6 @@ export async function PATCH(
   if (body.aiContext !== undefined) updates.aiContext = body.aiContext?.trim() || null;
   if (body.captionStyle !== undefined)
     updates.captionStyle = body.captionStyle?.trim() || null;
-  if (body.captionIncludeSummary !== undefined)
-    updates.captionIncludeSummary = body.captionIncludeSummary === true;
   if (body.fbPageId !== undefined) updates.fbPageId = body.fbPageId?.trim() || null;
   // token: อัปเดตเฉพาะเมื่อผู้ใช้พิมพ์ค่าใหม่ (เว้นว่าง = คงค่าเดิม เพราะ client ไม่เคยได้ token กลับมา)
   if (body.fbPageToken !== undefined && body.fbPageToken.trim())

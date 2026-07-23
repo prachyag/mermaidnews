@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
     fbPageId?: string;
     fbPageToken?: string;
     newsSource?: string;
-    captionIncludeSummary?: boolean;
   };
   try {
     body = await req.json();
@@ -67,7 +66,6 @@ export async function POST(req: NextRequest) {
       newsSource,
       aiContext: body.aiContext?.trim() || null,
       captionStyle: body.captionStyle?.trim() || null,
-      captionIncludeSummary: body.captionIncludeSummary === true,
       fbPageId: body.fbPageId?.trim() || null,
       fbPageToken: body.fbPageToken?.trim() || null,
     })

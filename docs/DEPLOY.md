@@ -81,6 +81,14 @@ npm run db:push
 ALTER TABLE articles ADD COLUMN long_form_failed_at integer;
 ```
 
+คอลัมน์ที่**เลิกใช้แล้ว** ไม่ต้องรีบลบ โค้ดไม่ได้อ่านมันแล้วและ SQLite ไม่แคร์คอลัมน์ส่วนเกิน
+(`topics.caption_include_summary` — สวิตช์แคปชันยาวต่อหัวข้อที่ถอดออกไป) จะเก็บไว้เฉย ๆ ก็ได้
+อยากลบให้สะอาดค่อยรันทีหลังตอนไม่มีคนใช้:
+
+```sql
+ALTER TABLE topics DROP COLUMN caption_include_summary;
+```
+
 > ⚠️ SQL console บนหน้าเว็บ Turso **รันได้ทีละ statement** — ถ้าวางหลายบรรทัดพร้อมกัน
 > มันจะรันแค่บรรทัดแรกโดยไม่แจ้งเตือน ต้องวางทีละอันแล้วกด Run ทีละครั้ง
 >
