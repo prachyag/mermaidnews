@@ -66,7 +66,14 @@ export default function Home() {
   const [reprocessing, setReprocessing] = useState(false);
   const [longForming, setLongForming] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [loadingArticles, setLoadingArticles] = useState(true);
   const batchRunIds = useRef<number[]>([]);
+  /** ยกเลิกคำขอโหลดข่าวอันก่อนเมื่อมีอันใหม่ */
+  const abortRef = useRef<AbortController | null>(null);
+  /** เลขลำดับคำขอ — ใช้ทิ้งผลของคำขอเก่าที่มาช้ากว่า */
+  const requestSeq = useRef(0);
+  /** หัวข้อที่นับยอดไว้ล่าสุด — ใช้ตัดสินว่าต้องนับใหม่ไหม */
+  const countedTopic = useRef<string | null>(null);
 
   const loadTopics = useCallback(async () => {
     const res = await fetch("/api/topics");
@@ -74,14 +81,42 @@ export default function Home() {
     setTopics(data.topics ?? []);
   }, []);
 
-  const loadArticles = useCallback(async (topicId: string, status: string) => {
-    const res = await fetch(
-      `/api/articles?topicId=${topicId}&status=${status}`,
-    );
-    const data = await res.json();
-    setArticleRows(data.articles ?? []);
-    setCounts(data.counts ?? EMPTY_COUNTS);
-  }, []);
+  /**
+   * โหลดรายการข่าว
+   *
+   * withCounts=false เมื่อเปลี่ยนแค่แท็บ — ยอดแต่ละสถานะเท่ากันหมดทุกแท็บอยู่แล้ว
+   * ไม่ต้องให้เซิร์ฟเวอร์นับใหม่ (ประหยัดการเดินทางไปฐานข้อมูล 1 รอบ ~130ms)
+   *
+   * กันคำตอบสลับลำดับ 2 ชั้น: ยกเลิกคำขอเก่าด้วย AbortController และเทียบเลขลำดับ
+   * ก่อนเขียน state — ถ้ากดแท็บรัว ๆ คำตอบของแท็บเก่าที่มาช้าจะต้องไม่เขียนทับแท็บปัจจุบัน
+   */
+  const loadArticles = useCallback(
+    async (topicId: string, status: string, { withCounts = true } = {}) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const seq = ++requestSeq.current;
+
+      setLoadingArticles(true);
+      try {
+        const res = await fetch(
+          `/api/articles?topicId=${topicId}&status=${status}${withCounts ? "" : "&counts=0"}`,
+          { signal: controller.signal },
+        );
+        const data = await res.json();
+        if (seq !== requestSeq.current) return; // มีคำขอใหม่กว่าแซงไปแล้ว — ทิ้งผลนี้
+        setArticleRows(data.articles ?? []);
+        if (data.counts) setCounts(data.counts);
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return; // ตั้งใจยกเลิกเอง ไม่ใช่ error
+        if (seq === requestSeq.current) setMessage("❌ โหลดรายการข่าวไม่สำเร็จ");
+      } finally {
+        // เคลียร์สถานะกำลังโหลดเฉพาะเจ้าของคำขอล่าสุด ไม่งั้นคำขอเก่าจะไปปิดไฟของคำขอใหม่
+        if (seq === requestSeq.current) setLoadingArticles(false);
+      }
+    },
+    [],
+  );
 
   const loadStatus = useCallback(async (): Promise<{
     anyRunning: boolean;
@@ -99,11 +134,15 @@ export default function Home() {
   }, [loadTopics, loadStatus]);
 
   useEffect(() => {
-    loadArticles(selectedTopic, statusFilter);
+    // เปลี่ยนแค่แท็บ = ยอดไม่เปลี่ยน ไม่ต้องให้เซิร์ฟเวอร์นับใหม่
+    const topicChanged = countedTopic.current !== selectedTopic;
+    countedTopic.current = selectedTopic;
+    loadArticles(selectedTopic, statusFilter, { withCounts: topicChanged });
   }, [selectedTopic, statusFilter, loadArticles]);
 
+  /** โหลดใหม่หลังมีการแก้ข้อมูล — ต้องนับยอดใหม่เสมอเพราะจำนวนแต่ละสถานะเปลี่ยนไปแล้ว */
   const reloadArticles = useCallback(
-    () => loadArticles(selectedTopic, statusFilter),
+    () => loadArticles(selectedTopic, statusFilter, { withCounts: true }),
     [loadArticles, selectedTopic, statusFilter],
   );
 
@@ -521,19 +560,44 @@ export default function Home() {
           {statusFilter === "all" ? "ข่าวทั้งหมด" : statusLabel(statusFilter)}
           <span className="text-sm font-normal text-gray-500">
             {/* บอกตามจริงเมื่อรายการถูกตัด — เดิมโชว์ "200 รายการ" ทั้งที่มีมากกว่านั้น */}
-            {truncated
-              ? `แสดง ${articleRows.length} จาก ${shownTotal} รายการ`
-              : `${shownTotal} รายการ`}
+            {loadingArticles
+              ? "กำลังโหลด..."
+              : truncated
+                ? `แสดง ${articleRows.length} จาก ${shownTotal} รายการ`
+                : `${shownTotal} รายการ`}
           </span>
         </h2>
-        {articleRows.length === 0 ? (
+        {loadingArticles && articleRows.length === 0 ? (
+          /* ยังไม่มีอะไรให้โชว์ — ขึ้นโครงหลอกไว้ก่อน ดีกว่าจอว่างที่ดูเหมือนไม่มีข่าว */
+          <ul className="space-y-3" aria-busy="true" aria-label="กำลังโหลดรายการข่าว">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="animate-pulse rounded-xl border border-gray-200 p-4 dark:border-gray-700"
+              >
+                <div className="mb-3 h-4 w-3/4 rounded bg-gray-200 dark:bg-gray-700" />
+                <div className="mb-2 h-3 w-1/3 rounded bg-gray-100 dark:bg-gray-800" />
+                <div className="h-3 w-full rounded bg-gray-100 dark:bg-gray-800" />
+              </li>
+            ))}
+          </ul>
+        ) : articleRows.length === 0 ? (
           <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700">
             {counts.all === 0
               ? 'ยังไม่มีข่าวในระบบ — กด "ดึงข่าวทันที" เพื่อเริ่ม'
               : `ไม่มีข่าวสถานะ "${statusLabel(statusFilter)}" — ลองเลือกแท็บอื่น`}
           </p>
         ) : (
-          <ul className="space-y-3">
+          /*
+           * ระหว่างโหลดแท็บใหม่ ยังโชว์รายการเดิมอยู่แต่หรี่ลงและกดไม่ได้
+           * เพื่อไม่ให้เข้าใจผิดว่าข้อมูลที่เห็นคือของแท็บใหม่แล้ว (ปัญหาเดิมคือดูเหมือนค้าง)
+           */
+          <ul
+            className={`space-y-3 transition-opacity duration-150 ${
+              loadingArticles ? "pointer-events-none opacity-40" : ""
+            }`}
+            aria-busy={loadingArticles}
+          >
             {articleRows.map((a) => (
               <ArticleCard key={a.id} article={a} onChanged={reloadArticles} />
             ))}

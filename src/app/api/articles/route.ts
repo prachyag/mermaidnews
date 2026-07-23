@@ -64,7 +64,18 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(articles.publishedAt), desc(articles.createdAt))
     .limit(200);
 
-  const counts = await countArticlesByStatus({ userId, topicId: scopedTopicId });
+  /**
+   * ยอดแต่ละสถานะไม่ขึ้นกับแท็บที่เปิดอยู่ — ค่าเท่ากันหมดทุกแท็บในขอบเขตหัวข้อเดียวกัน
+   * การสลับแท็บจึงไม่ต้องนับใหม่ ประหยัดการเดินทางไป-กลับฐานข้อมูล 1 รอบ (~130ms)
+   * ซึ่งเป็นเวลาเกือบครึ่งของคำขอนี้ทั้งคำขอ
+   *
+   * client ส่ง counts=0 มาเมื่อเปลี่ยนแค่แท็บ และไม่ส่ง (= นับ) เมื่อเปลี่ยนหัวข้อ
+   * หรือหลังมีการแก้ข้อมูลที่ทำให้ยอดเปลี่ยน
+   */
+  const counts =
+    params.get("counts") === "0"
+      ? undefined
+      : await countArticlesByStatus({ userId, topicId: scopedTopicId });
 
   return NextResponse.json({ articles: rows, counts });
 }
