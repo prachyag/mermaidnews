@@ -14,6 +14,7 @@ type PendingArticle = {
   topicName: string;
   aiContext: string | null;
   captionStyle: string | null;
+  captionIncludeSummary: boolean;
 };
 
 /** เขียนผลประเมินของ AI ลงข่าวหนึ่งชิ้น — ใช้ร่วมกันทั้งทางเดินเดี่ยวและแบบชุด */
@@ -63,6 +64,7 @@ export async function processOneArticle(
       topicName: article.topicName,
       aiContext: article.aiContext,
       captionStyle: article.captionStyle,
+      captionIncludeSummary: article.captionIncludeSummary,
       title: article.title,
       description: article.description,
       source: article.source,
@@ -157,6 +159,7 @@ export async function processPendingArticles(
       topicName: topics.name,
       aiContext: topics.aiContext,
       captionStyle: topics.captionStyle,
+      captionIncludeSummary: topics.captionIncludeSummary,
     })
     .from(articles)
     .innerJoin(topics, eq(articles.topicId, topics.id))
@@ -198,6 +201,7 @@ export async function processPendingArticles(
         topicName: head.topicName,
         aiContext: head.aiContext,
         captionStyle: head.captionStyle,
+        captionIncludeSummary: head.captionIncludeSummary,
         articles: batch.map((a) => ({
           id: a.id,
           title: a.title,

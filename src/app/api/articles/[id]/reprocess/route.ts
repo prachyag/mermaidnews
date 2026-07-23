@@ -38,6 +38,7 @@ export async function POST(
       topicName: topic.name,
       aiContext: topic.aiContext,
       captionStyle: topic.captionStyle,
+      captionIncludeSummary: topic.captionIncludeSummary,
     });
     const [updated] = await db
       .select()

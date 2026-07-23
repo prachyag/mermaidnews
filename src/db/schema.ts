@@ -77,6 +77,18 @@ export const topics = sqliteTable("topics", {
   keywords: text("keywords", { mode: "json" }).$type<string[]>().notNull(),
   aiContext: text("ai_context"),
   captionStyle: text("caption_style"),
+  /**
+   * ให้แคปชันพร้อมโพสสรุปเนื้อหาข่าวเต็ม ๆ ลงไปด้วยหรือไม่
+   *
+   * false (ค่าเริ่มต้น = พฤติกรรมเดิม): แคปชันสั้น เกริ่นชวนให้คลิกอ่านต่อจากลิงก์
+   * true: แคปชันเล่าสาระข่าวให้ครบในตัว คนอ่านได้ใจความโดยไม่ต้องกดลิงก์
+   *
+   * ต่างจากฟิลด์ summary ของข่าวตรงที่ summary ใช้ดูบนแดชบอร์ดเท่านั้น ไม่ได้ถูกโพส
+   * ตัวที่ขึ้นเพจจริงคือ caption + hashtags (ดู publish route)
+   */
+  captionIncludeSummary: integer("caption_include_summary", { mode: "boolean" })
+    .notNull()
+    .default(false),
   /** แหล่งข่าวที่จะดึง (ดู NewsSource) — default auto = พฤติกรรมเดิมก่อนมีตัวเลือกนี้ */
   newsSource: text("news_source").$type<NewsSource>().notNull().default("auto"),
   fbPageId: text("fb_page_id"),

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArticleCard, type ArticleRow } from "@/components/ArticleCard";
 import { STATUS_META, STATUS_ORDER, statusLabel } from "@/lib/article-status";
 import type { ArticleCounts } from "@/lib/article-counts";
+import { MAX_REPROCESS } from "@/lib/reprocess-policy";
 
 type Topic = {
   id: number;
@@ -61,6 +62,7 @@ export default function Home() {
   const [fetching, setFetching] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const batchRunIds = useRef<number[]>([]);
 
@@ -146,6 +148,51 @@ export default function Home() {
     setMessage(`🤖 ประมวลผลเสร็จ: ${parts.join(" • ")}`);
     await reloadArticles();
   }, [selectedTopic, reloadArticles]);
+
+  /**
+   * สั่งประมวลผลใหม่ทีละหลายข่าว — ตั้งสถานะกลับเป็น "รอประมวลผล" แล้วใช้ลูปเดิมทำงานต่อ
+   * (ไม่มีทางประมวลผลคู่ขนาน จึงได้การรวมชุด/เว้นจังหวะ/บันทึกสถิติเหมือนกันทุกอย่าง)
+   */
+  const bulkReprocess = useCallback(async () => {
+    const scope = statusFilter === "draft" || statusFilter === "irrelevant" ? statusFilter : null;
+    const label = scope === "draft" ? "ร่างโพสต์" : scope === "irrelevant" ? "ไม่เกี่ยวข้อง" : "ร่างโพสต์และไม่เกี่ยวข้อง";
+    if (
+      !confirm(
+        `ให้ AI ประมวลผลข่าว "${label}" ใหม่ (สูงสุด ${MAX_REPROCESS} ข่าวต่อครั้ง)?\n\n` +
+          "แคปชันและสรุปเดิมจะถูกเขียนทับด้วยผลใหม่ ถ้าเคยแก้แคปชันเองไว้จะหายไป\n" +
+          "ข่าวที่อนุมัติ/ตั้งเวลา/โพสแล้ว/ปฏิเสธ จะไม่ถูกแตะ",
+      )
+    ) {
+      return;
+    }
+    setReprocessing(true);
+    try {
+      const res = await fetch("/api/articles/bulk-reprocess", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topicId: selectedTopic, ...(scope ? { status: scope } : {}) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(`❌ ${data.error ?? "สั่งประมวลผลใหม่ไม่สำเร็จ"}`);
+        return;
+      }
+      if (data.queued === 0) {
+        setMessage("ไม่มีข่าวที่สั่งประมวลผลใหม่ได้ในขอบเขตนี้");
+        return;
+      }
+      setMessage(
+        `♻️ ตั้ง ${data.queued} ข่าวรอประมวลผลใหม่แล้ว` +
+          (data.remaining > 0 ? ` (ยังเหลืออีก ${data.remaining} — กดซ้ำเพื่อทำต่อ)` : "") +
+          " — กำลังเรียก AI...",
+      );
+      await reloadArticles();
+    } finally {
+      setReprocessing(false);
+    }
+    // ต่อด้วยลูปประมวลผลเดิมทันที ผู้ใช้จะได้ไม่ต้องกดสองปุ่ม
+    await startProcessing();
+  }, [selectedTopic, statusFilter, reloadArticles, startProcessing]);
 
   // ระหว่างดึง: poll สถานะทุก 2 วินาทีจนจบ สรุปผล แล้วส่งต่อให้ AI ประมวลผลอัตโนมัติ
   useEffect(() => {
@@ -267,6 +314,11 @@ export default function Home() {
     statusFilter === "irrelevant" || statusFilter === "rejected"
       ? (counts[statusFilter] ?? 0)
       : 0;
+  // ปุ่มประมวลผลใหม่: แท็บ draft/irrelevant ใช้ยอดแท็บนั้น, แท็บอื่นรวมสองสถานะที่ทำได้
+  const reprocessCount =
+    statusFilter === "draft" || statusFilter === "irrelevant"
+      ? (counts[statusFilter] ?? 0)
+      : (counts.draft ?? 0) + (counts.irrelevant ?? 0);
   const shownTotal =
     counts[statusFilter as keyof ArticleCounts] ?? articleRows.length;
   // API คืนได้สูงสุด 200 แถว — ถ้ายอดจริงมากกว่าที่ได้มา แปลว่ารายการถูกตัด
@@ -318,6 +370,19 @@ export default function Home() {
               {processing
                 ? "⏳ AI กำลังประมวลผล..."
                 : `🤖 ประมวลผล AI (ค้าง ${pendingCount})`}
+            </button>
+          )}
+
+          {reprocessCount > 0 && (
+            <button
+              onClick={bulkReprocess}
+              disabled={fetching || processing || reprocessing || bulkDeleting}
+              className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:text-indigo-400 dark:hover:bg-indigo-950"
+              title={`ให้ AI เขียนแคปชันใหม่ทั้งหมด (สูงสุด ${MAX_REPROCESS} ข่าวต่อครั้ง) — ไม่แตะข่าวที่อนุมัติ/โพสแล้ว`}
+            >
+              {reprocessing
+                ? "⏳ กำลังตั้งคิว..."
+                : `♻️ ประมวลผลใหม่ทั้งหมด (${Math.min(reprocessCount, MAX_REPROCESS)})`}
             </button>
           )}
 

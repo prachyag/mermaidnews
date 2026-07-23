@@ -5,6 +5,8 @@ export type ProcessArticleInput = {
   aiContext: string | null;
   /** โทน/สไตล์แคปชันของหัวข้อนี้ (จากฟิลด์ captionStyle ของ Topic) */
   captionStyle: string | null;
+  /** true = ให้แคปชันสรุปเนื้อหาข่าวเต็ม ๆ ในตัว, false = แคปชันสั้นเกริ่นให้กดลิงก์อ่านต่อ */
+  captionIncludeSummary?: boolean;
   title: string;
   description: string | null;
   source: string | null;
@@ -37,6 +39,8 @@ export type ProcessBatchInput = {
   topicName: string;
   aiContext: string | null;
   captionStyle: string | null;
+  /** true = ให้แคปชันสรุปเนื้อหาข่าวเต็ม ๆ ในตัว, false = แคปชันสั้นเกริ่นให้กดลิงก์อ่านต่อ */
+  captionIncludeSummary?: boolean;
   articles: BatchArticleInput[];
 };
 
