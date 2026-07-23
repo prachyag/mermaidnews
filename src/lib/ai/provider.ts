@@ -10,12 +10,19 @@ export type ProcessArticleInput = {
   title: string;
   description: string | null;
   source: string | null;
+  /**
+   * เนื้อข่าวเต็มที่ดึงจากหน้าเว็บจริง (ถ้ามี) — ใช้กับแคปชันแบบยาว
+   * ไม่มี = ให้ประเมิน/เขียนจากพาดหัว+เนื้อหาย่อเท่านั้น ห้ามแต่งเพิ่ม
+   */
+  content?: string | null;
 };
 
 export type ArticleAssessment = {
   relevant: boolean;
-  /** 0–1 */
+  /** 0–1 — เกี่ยวข้องกับหัวข้อแค่ไหน */
   relevanceScore: number;
+  /** 0–1 — น่าสนใจ/มีผลกระทบเชิงข่าวแค่ไหน (ใช้จัดอันดับข่าวเด่นที่จะเขียนยาว) */
+  interestScore: number;
   /** สรุปข่าวภาษาไทยสั้น ๆ (เฉพาะข่าวที่เกี่ยวข้อง) */
   summary: string | null;
   /** แคปชันพร้อมโพส ไม่รวมลิงก์ (ลิงก์ต้นทางแนบตอนโพส) */

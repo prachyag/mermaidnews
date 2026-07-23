@@ -175,6 +175,30 @@ export function ArticleCard({
     }
   }
 
+  /**
+   * สั่งเขียนแคปชันแบบยาวให้ข่าวนี้ — ระบบไปอ่านเนื้อข่าวจากเว็บจริงมาเป็นวัตถุดิบ
+   * ใช้เมื่อข่าวนี้ไม่ได้ถูก AI เลือกให้อยู่ในกลุ่มข่าวเด่น แต่เราอยากได้แคปชันยาว
+   */
+  async function longForm() {
+    setBusy("longForm");
+    setError(null);
+    try {
+      const res = await fetch(`/api/articles/${article.id}/long-form`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "เขียนแคปชันยาวไม่สำเร็จ");
+        return;
+      }
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function reprocess() {
     setBusy("reprocess");
     setError(null);
@@ -485,6 +509,17 @@ export function ArticleCard({
               className={`${btn} border border-gray-300 dark:border-gray-600`}
             >
               {busy === "restore" ? "..." : "↩️ กู้คืนเป็นร่าง"}
+            </button>
+          )}
+
+          {(article.status === "draft" || article.status === "approved") && (
+            <button
+              onClick={longForm}
+              disabled={busy !== null}
+              className={`${btn} border border-violet-300 text-violet-600 hover:bg-violet-50 dark:border-violet-800 dark:hover:bg-violet-950`}
+              title="ไปอ่านเนื้อข่าวจากเว็บสำนักข่าวจริง แล้วให้ AI เขียนแคปชันแบบยาว (เขียนทับแคปชันเดิม)"
+            >
+              {busy === "longForm" ? "✨ กำลังอ่านเว็บ..." : "✨ เขียนแคปชันยาว"}
             </button>
           )}
 

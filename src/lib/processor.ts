@@ -29,6 +29,7 @@ async function applyAssessment(
         ? {
             status: "draft",
             relevanceScore: result.relevanceScore,
+            interestScore: result.interestScore,
             summary: result.summary,
             caption: result.caption,
             hashtags: result.hashtags,
@@ -36,6 +37,7 @@ async function applyAssessment(
         : {
             status: "irrelevant",
             relevanceScore: result.relevanceScore,
+            interestScore: result.interestScore,
           },
     )
     .where(eq(articles.id, articleId));

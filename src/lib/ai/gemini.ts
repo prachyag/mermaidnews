@@ -77,6 +77,7 @@ const responseSchema = {
   properties: {
     relevant: { type: Type.BOOLEAN },
     relevanceScore: { type: Type.NUMBER },
+    interestScore: { type: Type.NUMBER },
     summary: { type: Type.STRING, nullable: true },
     caption: { type: Type.STRING, nullable: true },
     hashtags: {
@@ -85,7 +86,7 @@ const responseSchema = {
       nullable: true,
     },
   },
-  required: ["relevant", "relevanceScore"],
+  required: ["relevant", "relevanceScore", "interestScore"],
 } as const;
 
 /**
@@ -104,11 +105,12 @@ const batchResponseSchema = {
           id: { type: Type.INTEGER },
           relevant: { type: Type.BOOLEAN },
           relevanceScore: { type: Type.NUMBER },
+          interestScore: { type: Type.NUMBER },
           summary: { type: Type.STRING, nullable: true },
           caption: { type: Type.STRING, nullable: true },
           hashtags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
         },
-        required: ["id", "relevant", "relevanceScore"],
+        required: ["id", "relevant", "relevanceScore", "interestScore"],
       },
     },
   },
@@ -124,9 +126,13 @@ const batchResponseSchema = {
  */
 function captionInstruction(includeSummary: boolean | undefined): string {
   return includeSummary
-    ? "แคปชันสำหรับโพส Facebook เป็นภาษาไทย — **สรุปสาระสำคัญของข่าวให้ครบถ้วนในตัวแคปชันเอง** " +
-        "(ใคร ทำอะไร ที่ไหน เมื่อไหร่ ผลเป็นอย่างไร) ให้คนอ่านเข้าใจเนื้อข่าวได้โดยไม่ต้องกดลิงก์ " +
-        "ความยาวประมาณ 3–6 ประโยค เขียนให้ลื่นเป็นย่อหน้าเดียว ห้ามแต่งข้อมูลที่ไม่มีในข่าว"
+    ? "แคปชันสำหรับโพส Facebook เป็นภาษาไทย — **เล่าเนื้อข่าวให้ครบถ้วนในตัวแคปชันเอง** " +
+        "(ใคร ทำอะไร ที่ไหน เมื่อไหร่ ผลเป็นอย่างไร) ให้คนอ่านเข้าใจเนื้อข่าวได้โดยไม่ต้องกดลิงก์\n" +
+        "   **ไม่จำกัดความยาว** เขียนยาวได้ตามใจ ใช้สำนวนการเล่าเรื่องของคุณเองได้เต็มที่ " +
+        "แบ่งเป็นหลายย่อหน้าได้ถ้าอ่านง่ายกว่า (ขึ้นบรรทัดใหม่ด้วย \\n)\n" +
+        "   **ข้อห้ามเดียวที่เด็ดขาด: ห้ามแต่งข้อมูลที่ไม่มีในข้อมูลต้นทางที่ให้มา** " +
+        "ห้ามเดาตัวเลข วันเวลา ชื่อคน หรือรายละเอียดเพิ่มเอง — ถ้าข้อมูลต้นทางมีน้อย ก็เขียนเท่าที่มีจริง " +
+        "(สั้นแต่จริง ดีกว่ายาวแล้วมั่ว) ขยายความได้เฉพาะการเรียบเรียง/บริบททั่วไปที่ไม่ใช่ข้อเท็จจริงใหม่"
     : "แคปชันสำหรับโพส Facebook เป็นภาษาไทย — สั้น กระชับ 1–2 ประโยค เกริ่นให้น่าสนใจชวนกดลิงก์อ่านต่อ";
 }
 
@@ -168,7 +174,8 @@ ${list}
 แต่ละรายการประกอบด้วย:
 1. id: id ของข่าวชิ้นนั้น
 2. relevant: ข่าวนี้เกี่ยวข้องกับหัวข้อของเพจจริงหรือไม่
-3. relevanceScore: คะแนนความเกี่ยวข้อง 0 ถึง 1
+3. relevanceScore: คะแนนความเกี่ยวข้องกับหัวข้อ 0 ถึง 1
+3.1 interestScore: คะแนน "ความน่าสนใจเชิงข่าว" 0 ถึง 1 — ให้สูงเมื่อเป็นข่าวใหญ่ แปลกใหม่ มีผลกระทบวงกว้าง หรือคนน่าจะอยากอ่าน/แชร์ ให้ต่ำเมื่อเป็นข่าวประกาศทั่วไป ข่าวซ้ำ ๆ หรือรายละเอียดหยุมหยิม (ให้คะแนนแยกจาก relevanceScore — ข่าวตรงหัวข้อมากแต่ไม่น่าสนใจก็มีได้)
 4. ถ้า relevant เป็น true ให้ตอบเพิ่ม:
    - summary: สรุปข่าวเป็นภาษาไทย 1–2 ประโยค
    - caption: ${captionInstruction(input.captionIncludeSummary)} — ห้ามใส่ลิงก์และห้ามใส่แฮชแท็กในแคปชัน (ระบบจะแนบให้เอง)
@@ -187,10 +194,14 @@ ${input.aiContext ? `เกณฑ์ความเกี่ยวข้อง: 
 พาดหัว: ${input.title}
 ${input.source ? `สำนักข่าว: ${input.source}` : ""}
 ${input.description ? `เนื้อหาย่อ: ${input.description}` : "(ไม่มีเนื้อหาย่อ — ประเมินจากพาดหัว)"}
+${input.content ? `
+### เนื้อข่าวเต็มจากเว็บต้นทาง (ใช้อันนี้เป็นแหล่งข้อมูลหลัก)
+${input.content}` : ""}
 
 ## สิ่งที่ต้องตอบ (JSON)
 1. relevant: ข่าวนี้เกี่ยวข้องกับหัวข้อของเพจจริงหรือไม่
-2. relevanceScore: คะแนนความเกี่ยวข้อง 0 ถึง 1
+2. relevanceScore: คะแนนความเกี่ยวข้องกับหัวข้อ 0 ถึง 1
+2.1 interestScore: คะแนน "ความน่าสนใจเชิงข่าว" 0 ถึง 1 — ข่าวใหญ่/แปลกใหม่/มีผลกระทบวงกว้าง = สูง, ข่าวประกาศทั่วไป/หยุมหยิม = ต่ำ (ให้คะแนนแยกจาก relevanceScore)
 3. ถ้า relevant เป็น true ให้ตอบเพิ่ม:
    - summary: สรุปข่าวเป็นภาษาไทย 1–2 ประโยค
    - caption: ${captionInstruction(input.captionIncludeSummary)} ${input.captionStyle ? `สไตล์: ${input.captionStyle}` : "โทนเป็นกันเอง อ่านง่าย"} — ห้ามใส่ลิงก์และห้ามใส่แฮชแท็กในแคปชัน (ระบบจะแนบให้เอง)
@@ -320,14 +331,17 @@ export class GeminiProvider implements AiProvider {
 function normalizeAssessment(raw: {
   relevant?: unknown;
   relevanceScore?: unknown;
+  interestScore?: unknown;
   summary?: unknown;
   caption?: unknown;
   hashtags?: unknown;
 }): ArticleAssessment {
   const relevant = raw.relevant === true;
+  const clamp01 = (v: unknown) => Math.min(1, Math.max(0, Number(v ?? 0) || 0));
   return {
     relevant,
-    relevanceScore: Math.min(1, Math.max(0, Number(raw.relevanceScore ?? 0) || 0)),
+    relevanceScore: clamp01(raw.relevanceScore),
+    interestScore: clamp01(raw.interestScore),
     summary: relevant ? ((raw.summary as string | null) ?? null) : null,
     caption: relevant ? ((raw.caption as string | null) ?? null) : null,
     hashtags: relevant ? ((raw.hashtags as string[] | null) ?? null) : null,

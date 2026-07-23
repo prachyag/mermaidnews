@@ -40,6 +40,7 @@ function assessment(over: Partial<ArticleAssessment> = {}): ArticleAssessment {
   return {
     relevant: true,
     relevanceScore: 0.9,
+    interestScore: 0.7,
     summary: "สรุป",
     caption: "แคปชัน",
     hashtags: ["#tag"],

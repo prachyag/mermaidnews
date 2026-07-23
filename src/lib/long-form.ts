@@ -1,0 +1,270 @@
+/**
+ * แคปชันแบบยาว — เลือกข่าวเด่น ไปอ่านเนื้อข่าวจากเว็บจริง แล้วให้ AI เขียนแคปชันเต็ม
+ *
+ * ทำไมต้องจำกัดจำนวน: การเขียนยาว 1 ข่าว = แกะลิงก์จริง 1 ครั้ง + โหลดหน้าเว็บ 1 ครั้ง
+ * + เรียก AI 1 ครั้งด้วย prompt ที่ยาวกว่าปกติมาก (เนื้อข่าวเต็มถึง 6,000 ตัวอักษร)
+ * ถ้าทำทุกข่าวจะช้าและกินโควตามหาศาล จึงทำเฉพาะข่าวที่คุ้มที่สุดไม่กี่ชิ้นต่อรอบ
+ *
+ * ทำไมต้องอ่านเว็บจริง: RSS ให้แค่พาดหัว + เนื้อหาย่อ ถ้าสั่ง AI เขียนยาวจากแค่นั้น
+ * มันจะแต่งข้อมูลขึ้นมาเติมให้ครบความยาว ซึ่งรับไม่ได้สำหรับคอนเทนต์ข่าว
+ */
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { articles, topics } from "@/db/schema";
+import { fetchArticleContent } from "./article-content";
+import { isGoogleNewsUrl, resolveArticleUrl } from "./resolve-url";
+import { AI_MODEL_NAME, getAiProvider } from "./ai/gemini";
+import { recordAiCall } from "./ai-stats";
+import { MAX_LONG_FORM } from "./long-form-policy";
+
+// นิยามจริงอยู่ใน long-form-policy.ts (ไฟล์ล้วน) เพื่อให้ฝั่ง client import ได้ด้วย
+export { MAX_LONG_FORM } from "./long-form-policy";
+
+/**
+ * ดึงรายชื่อผู้สมัครมากกว่าที่ต้องการกี่เท่า
+ * เพราะบางเว็บดึงเนื้อไม่ได้ (บล็อกบอท/paywall/เรนเดอร์ด้วย JS) ต้องมีตัวสำรองให้ข้ามไปเรื่อย ๆ
+ * จนได้ครบตามจำนวนที่ขอ
+ */
+const CANDIDATE_MULTIPLIER = 4;
+
+export type LongFormOutcome = {
+  articleId: number;
+  title: string;
+  ok: boolean;
+  /** เหตุผลที่ข้าม (เมื่อ ok = false) */
+  reason?: string;
+};
+
+export type LongFormResult = {
+  /** จำนวนที่เขียนแคปชันยาวสำเร็จ */
+  generated: number;
+  /** จำนวนที่ถูกข้ามเพราะดึงเนื้อข่าวไม่ได้ */
+  skipped: number;
+  outcomes: LongFormOutcome[];
+};
+
+type Candidate = {
+  id: number;
+  title: string;
+  url: string;
+  resolvedUrl: string | null;
+  description: string | null;
+  source: string | null;
+  topicId: number;
+  topicName: string;
+  aiContext: string | null;
+  captionStyle: string | null;
+};
+
+/**
+ * เลือกข่าวที่คุ้มจะเขียนยาวที่สุด — เรียงตามคะแนนความน่าสนใจที่ AI ให้ไว้
+ *
+ * เงื่อนไข: ต้องเป็นข่าวสถานะ draft (ผ่านการคัดกรองแล้วแต่ยังไม่ถูกอนุมัติ/โพส)
+ * และยังไม่เคยดึงเนื้อข่าวมา (content เป็น null) เพื่อไม่ให้เลือกซ้ำตัวเดิมทุกรอบ
+ *
+ * ข่าวที่ AI ไม่ได้ให้ interestScore (ข้อมูลเก่าก่อนมีฟีเจอร์นี้) ถูกจัดท้ายแถวด้วย
+ * COALESCE แต่ยังมีสิทธิ์ถูกเลือกถ้าไม่มีตัวเลือกอื่น
+ */
+export async function selectLongFormCandidates(input: {
+  userId: number;
+  topicId?: number | "all";
+  limit: number;
+}): Promise<Candidate[]> {
+  const conditions = [
+    eq(topics.userId, input.userId),
+    eq(articles.status, "draft"),
+    isNull(articles.content),
+  ];
+  if (input.topicId !== undefined && input.topicId !== "all") {
+    conditions.push(eq(articles.topicId, input.topicId));
+  }
+
+  return db
+    .select({
+      id: articles.id,
+      title: articles.title,
+      url: articles.url,
+      resolvedUrl: articles.resolvedUrl,
+      description: articles.description,
+      source: articles.source,
+      topicId: articles.topicId,
+      topicName: topics.name,
+      aiContext: topics.aiContext,
+      captionStyle: topics.captionStyle,
+    })
+    .from(articles)
+    .innerJoin(topics, eq(articles.topicId, topics.id))
+    .where(and(...conditions))
+    .orderBy(
+      desc(sql`coalesce(${articles.interestScore}, -1)`),
+      desc(articles.publishedAt),
+      desc(articles.createdAt),
+    )
+    .limit(input.limit);
+}
+
+/** หา URL เว็บข่าวจริง (แกะจาก Google News ถ้าจำเป็น) แล้ว cache ไว้ */
+async function ensureRealUrl(c: Candidate): Promise<string | null> {
+  if (c.resolvedUrl) return c.resolvedUrl;
+  if (!isGoogleNewsUrl(c.url)) return c.url;
+
+  const resolved = await resolveArticleUrl(c.url);
+  if (!resolved.ok) return null;
+  await db
+    .update(articles)
+    .set({ resolvedUrl: resolved.url })
+    .where(eq(articles.id, c.id));
+  return resolved.url;
+}
+
+/**
+ * เขียนแคปชันแบบยาวให้ข่าวหนึ่งชิ้น — คืน null ถ้าทำไม่ได้ (ผู้เรียกจะข้ามไปข่าวถัดไป)
+ * ทุกความล้มเหลวถูกแปลงเป็นเหตุผลอ่านรู้เรื่อง ไม่ throw ออกไปล้มทั้งรอบ
+ */
+async function writeLongCaption(c: Candidate): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const realUrl = await ensureRealUrl(c);
+  if (!realUrl) return { ok: false, reason: "แกะลิงก์เว็บข่าวจริงไม่สำเร็จ" };
+
+  const content = await fetchArticleContent(realUrl);
+  if (!content.ok) return { ok: false, reason: content.reason };
+
+  const startedAt = Date.now();
+  const stat = {
+    topicId: c.topicId,
+    topicName: c.topicName,
+    model: AI_MODEL_NAME,
+    mode: "single" as const,
+    requested: 1,
+  };
+
+  try {
+    const result = await getAiProvider().processArticle({
+      topicName: c.topicName,
+      aiContext: c.aiContext,
+      captionStyle: c.captionStyle,
+      captionIncludeSummary: true,
+      title: c.title,
+      description: c.description,
+      source: c.source,
+      content: content.text,
+    });
+    await recordAiCall({ ...stat, returned: 1, durationMs: Date.now() - startedAt, ok: true });
+
+    // แยกสองกรณีให้ชัด ไม่งั้นผู้ใช้เข้าใจผิดว่าระบบพัง ทั้งที่ AI ตัดสินถูกแล้ว
+    if (!result.relevant) {
+      return { ok: false, reason: "AI อ่านเนื้อข่าวเต็มแล้วประเมินว่าไม่เกี่ยวข้องกับหัวข้อนี้" };
+    }
+    if (!result.caption) return { ok: false, reason: "AI ไม่ได้เขียนแคปชันกลับมา" };
+
+    await db
+      .update(articles)
+      .set({
+        caption: result.caption,
+        summary: result.summary,
+        hashtags: result.hashtags,
+        // เก็บเนื้อข่าวไว้ = เครื่องหมายว่าทำแล้ว + สั่งเขียนใหม่ได้โดยไม่ต้องรบกวนเว็บต้นทางซ้ำ
+        content: content.text,
+      })
+      .where(eq(articles.id, c.id));
+    return { ok: true };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await recordAiCall({
+      ...stat,
+      returned: 0,
+      durationMs: Date.now() - startedAt,
+      ok: false,
+      errorMessage: reason,
+    });
+    return { ok: false, reason };
+  }
+}
+
+/**
+ * เขียนแคปชันยาวให้ข่าวเด่นสูงสุด limit ชิ้น
+ * ดึงผู้สมัครมาเผื่อ แล้ววนไปเรื่อย ๆ ข้ามตัวที่ดึงเนื้อไม่ได้ จนได้ครบหรือหมดผู้สมัคร
+ */
+export async function generateLongFormCaptions(input: {
+  userId: number;
+  topicId?: number | "all";
+  limit?: number;
+}): Promise<LongFormResult> {
+  const limit = Math.min(Math.max(1, input.limit ?? MAX_LONG_FORM), MAX_LONG_FORM);
+  const candidates = await selectLongFormCandidates({
+    userId: input.userId,
+    topicId: input.topicId,
+    limit: limit * CANDIDATE_MULTIPLIER,
+  });
+
+  const outcomes: LongFormOutcome[] = [];
+  let generated = 0;
+
+  for (const c of candidates) {
+    if (generated >= limit) break;
+    const res = await writeLongCaption(c);
+    if (res.ok) {
+      generated++;
+      outcomes.push({ articleId: c.id, title: c.title, ok: true });
+    } else {
+      outcomes.push({ articleId: c.id, title: c.title, ok: false, reason: res.reason });
+    }
+  }
+
+  return { generated, skipped: outcomes.length - generated, outcomes };
+}
+
+/** เขียนแคปชันยาวให้ข่าวชิ้นเดียวที่ระบุ (ปุ่มสั่งเองรายข่าว) */
+export async function generateLongFormForArticle(input: {
+  userId: number;
+  articleId: number;
+}): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const [c] = await db
+    .select({
+      id: articles.id,
+      title: articles.title,
+      url: articles.url,
+      resolvedUrl: articles.resolvedUrl,
+      description: articles.description,
+      source: articles.source,
+      topicId: articles.topicId,
+      topicName: topics.name,
+      aiContext: topics.aiContext,
+      captionStyle: topics.captionStyle,
+    })
+    .from(articles)
+    .innerJoin(topics, eq(articles.topicId, topics.id))
+    .where(and(eq(articles.id, input.articleId), eq(topics.userId, input.userId)))
+    .limit(1);
+
+  if (!c) return { ok: false, status: 404, error: "ไม่พบข่าวนี้" };
+
+  const res = await writeLongCaption(c);
+  return res.ok ? { ok: true } : { ok: false, status: 502, error: res.reason };
+}
+
+/** นับข่าวที่ยังเข้าเกณฑ์เขียนยาวได้ (ใช้โชว์บนปุ่ม) */
+export async function countLongFormCandidates(input: {
+  userId: number;
+  topicId?: number | "all";
+}): Promise<number> {
+  const conditions = [
+    eq(topics.userId, input.userId),
+    eq(articles.status, "draft"),
+    isNull(articles.content),
+  ];
+  if (input.topicId !== undefined && input.topicId !== "all") {
+    conditions.push(eq(articles.topicId, input.topicId));
+  }
+  const rows = await db
+    .select({ id: articles.id })
+    .from(articles)
+    .innerJoin(topics, eq(articles.topicId, topics.id))
+    .where(and(...conditions));
+  return rows.length;
+}
+
+/** ใช้ในเทส/สคริปต์: ล้างเครื่องหมายว่าเคยเขียนยาวแล้ว */
+export async function clearLongFormMark(articleIds: number[]): Promise<void> {
+  if (articleIds.length === 0) return;
+  await db.update(articles).set({ content: null }).where(inArray(articles.id, articleIds));
+}

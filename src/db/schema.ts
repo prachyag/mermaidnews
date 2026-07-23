@@ -172,6 +172,21 @@ export const articles = sqliteTable(
     imageUrl: text("image_url"),
     status: text("status").$type<ArticleStatus>().notNull().default("fetched"),
     relevanceScore: real("relevance_score"),
+    /**
+     * คะแนน "ความน่าสนใจของข่าว" 0–1 ที่ AI ให้ตอนคัดกรอง — คนละเรื่องกับ relevanceScore
+     *
+     * relevanceScore = เกี่ยวกับหัวข้อแค่ไหน (ข่าวเล็ก ๆ ที่ตรงหัวข้อเป๊ะก็ได้คะแนนสูง)
+     * interestScore  = น่าสนใจ/มีผลกระทบแค่ไหนในเชิงข่าว (ข่าวใหญ่ แปลกใหม่ มีผลวงกว้าง)
+     * ใช้จัดอันดับว่าข่าวไหนคุ้มที่จะไปดึงเนื้อจากเว็บจริงมาเขียนแคปชันแบบยาว
+     */
+    interestScore: real("interest_score"),
+    /**
+     * เนื้อข่าวจริงที่ดึงมาจากหน้าเว็บสำนักข่าว (cache)
+     *
+     * มีค่า = เคยดึงสำเร็จและเขียนแคปชันแบบยาวไปแล้ว ใช้เป็นเครื่องหมายกันเลือกซ้ำ
+     * และทำให้สั่งเขียนใหม่ได้โดยไม่ต้องไปรบกวนเว็บต้นทางอีก
+     */
+    content: text("content"),
     summary: text("summary"),
     caption: text("caption"),
     hashtags: text("hashtags", { mode: "json" }).$type<string[]>(),

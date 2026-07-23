@@ -6,6 +6,7 @@ import { ArticleCard, type ArticleRow } from "@/components/ArticleCard";
 import { STATUS_META, STATUS_ORDER, statusLabel } from "@/lib/article-status";
 import type { ArticleCounts } from "@/lib/article-counts";
 import { MAX_REPROCESS } from "@/lib/reprocess-policy";
+import { MAX_LONG_FORM } from "@/lib/long-form-policy";
 
 type Topic = {
   id: number;
@@ -63,6 +64,7 @@ export default function Home() {
   const [processing, setProcessing] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [longForming, setLongForming] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const batchRunIds = useRef<number[]>([]);
 
@@ -193,6 +195,49 @@ export default function Home() {
     // ต่อด้วยลูปประมวลผลเดิมทันที ผู้ใช้จะได้ไม่ต้องกดสองปุ่ม
     await startProcessing();
   }, [selectedTopic, statusFilter, reloadArticles, startProcessing]);
+
+  /**
+   * เขียนแคปชันแบบยาวให้ข่าวเด่น — ระบบไปอ่านเนื้อข่าวจากเว็บจริงมาเป็นวัตถุดิบ
+   * ทำได้ทีละไม่กี่ชิ้นเพราะแต่ละชิ้นต้องโหลดหน้าเว็บ + เรียก AI ด้วย prompt ยาว
+   */
+  const runLongForm = useCallback(async () => {
+    if (
+      !confirm(
+        `ให้ AI เลือกข่าวเด่นสูงสุด ${MAX_LONG_FORM} ข่าว แล้วเขียนแคปชันแบบยาว?\n\n` +
+          "ระบบจะไปอ่านเนื้อข่าวจากเว็บสำนักข่าวจริง เพื่อให้เขียนได้ยาวโดยไม่แต่งข้อมูล\n" +
+          "แคปชันเดิมของข่าวที่ถูกเลือกจะถูกเขียนทับ (ข่าวที่เว็บเปิดไม่ได้จะถูกข้าม)",
+      )
+    ) {
+      return;
+    }
+    setLongForming(true);
+    setMessage("✨ กำลังอ่านเนื้อข่าวจากเว็บจริงและเขียนแคปชันยาว...");
+    try {
+      const res = await fetch("/api/articles/long-form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topicId: selectedTopic }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(`❌ ${data.error ?? "เขียนแคปชันยาวไม่สำเร็จ"}`);
+        return;
+      }
+      const skipReasons = (data.outcomes ?? [])
+        .filter((o: { ok: boolean }) => !o.ok)
+        .map((o: { reason?: string }) => o.reason)
+        .filter(Boolean);
+      setMessage(
+        data.generated === 0
+          ? `ไม่ได้เขียนแคปชันยาวเลย — ${skipReasons[0] ?? "ไม่มีข่าวที่เข้าเกณฑ์"}`
+          : `✨ เขียนแคปชันยาวสำเร็จ ${data.generated} ข่าว` +
+              (data.skipped > 0 ? ` (ข้าม ${data.skipped} ข่าวที่เปิดเว็บไม่ได้)` : ""),
+      );
+      await reloadArticles();
+    } finally {
+      setLongForming(false);
+    }
+  }, [selectedTopic, reloadArticles]);
 
   // ระหว่างดึง: poll สถานะทุก 2 วินาทีจนจบ สรุปผล แล้วส่งต่อให้ AI ประมวลผลอัตโนมัติ
   useEffect(() => {
@@ -370,6 +415,17 @@ export default function Home() {
               {processing
                 ? "⏳ AI กำลังประมวลผล..."
                 : `🤖 ประมวลผล AI (ค้าง ${pendingCount})`}
+            </button>
+          )}
+
+          {(counts.draft ?? 0) > 0 && (
+            <button
+              onClick={runLongForm}
+              disabled={fetching || processing || reprocessing || longForming}
+              className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title={`ให้ AI เลือกข่าวเด่นสูงสุด ${MAX_LONG_FORM} ข่าว ไปอ่านเนื้อจากเว็บจริง แล้วเขียนแคปชันแบบยาว`}
+            >
+              {longForming ? "⏳ กำลังอ่านเว็บ..." : `✨ เขียนยาว ${MAX_LONG_FORM} ข่าวเด่น`}
             </button>
           )}
 
