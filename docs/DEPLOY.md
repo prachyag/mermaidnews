@@ -68,6 +68,28 @@ npm run db:push
 > แก้ด้วยขั้นตอนที่ 5 (bootstrap admin) ทันทีหลังตั้ง schema
 > สำหรับ DB ใหม่ที่ยังว่าง ไม่มีปัญหานี้ — บัญชีแรกที่สมัครจะเป็น admin เอง
 
+### 2b. อัปเดต schema ของ DB ที่ **ใช้งานอยู่แล้ว**
+
+`docs/schema.sql` ใช้ `CREATE TABLE IF NOT EXISTS` — วางทับ DB เดิม **จะไม่เพิ่มคอลัมน์ใหม่ให้**
+ตารางที่มีอยู่แล้วจะถูกข้ามไปเงียบ ๆ แล้วโค้ดใหม่จะพังตอน query ด้วย
+`SQL_INPUT_ERROR: no such column: ...` (เคยเกิดจริงมาแล้วกับ `caption_include_summary`
+ทำให้ `/api/topics` คืน 500 บน production ทั้งที่ local ปกติ)
+
+คอลัมน์ที่เพิ่มหลังจากนั้น ต้องสั่ง `ALTER TABLE` เอง:
+
+```sql
+ALTER TABLE articles ADD COLUMN long_form_failed_at integer;
+```
+
+> ⚠️ SQL console บนหน้าเว็บ Turso **รันได้ทีละ statement** — ถ้าวางหลายบรรทัดพร้อมกัน
+> มันจะรันแค่บรรทัดแรกโดยไม่แจ้งเตือน ต้องวางทีละอันแล้วกด Run ทีละครั้ง
+>
+> ตรวจว่าขึ้นจริงแล้วด้วย: `SELECT long_form_failed_at FROM articles LIMIT 1;`
+> (ถ้าคอลัมน์ยังไม่มี จะได้ error ทันที — ปลอดภัยกว่าเดาว่ารันผ่านแล้ว)
+
+`ALTER TABLE ... ADD COLUMN` ของ SQLite เพิ่มคอลัมน์เปล่าให้แถวเดิมทั้งหมดเป็น NULL
+ไม่ต้องหยุดระบบ และไม่กระทบข้อมูลเดิม
+
 (optional) seed หัวข้อ "นางเงือก" เริ่มต้น — CLI: `npm run db:seed` (พร้อม env)
 หรือผ่านหน้าเว็บ: ข้ามไปเลย แล้วสร้างหัวข้อเองในหน้า "จัดการหัวข้อ" หลังล็อกอิน
 

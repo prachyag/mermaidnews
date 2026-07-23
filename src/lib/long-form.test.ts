@@ -129,6 +129,40 @@ describe("selectLongFormCandidates", () => {
     expect(got.map((c) => c.id)).toEqual([fresh.id]);
   });
 
+  /**
+   * เว็บที่บล็อกบอท/404 มักเป็นข่าวเด่นคะแนนสูง ถ้าเรียงตามคะแนนล้วน
+   * มันจะลอยขึ้นหัวคิวมาขวางทุกครั้งที่กดปุ่ม จนข่าวอื่นไม่มีวันได้คิว
+   */
+  it("ตัวที่เคยพังลงท้ายแถว แม้คะแนนจะสูงกว่า", async () => {
+    const failedHigh = await seed({ interestScore: 0.99 });
+    const freshLow = await seed({ interestScore: 0.1 });
+    await db
+      .update(articles)
+      .set({ longFormFailedAt: new Date() })
+      .where(eq(articles.id, failedHigh.id));
+
+    const got = await selectLongFormCandidates({ userId, limit: 10 });
+
+    expect(got.map((c) => c.id)).toEqual([freshLow.id, failedHigh.id]);
+  });
+
+  it("ในกลุ่มที่เคยพังด้วยกัน ตัวที่พังนานแล้วได้ลองก่อน (เว็บอาจกลับมาแล้ว)", async () => {
+    const old = await seed({ interestScore: 0.1 });
+    const recent = await seed({ interestScore: 0.9 });
+    await db
+      .update(articles)
+      .set({ longFormFailedAt: new Date(Date.now() - 86_400_000) })
+      .where(eq(articles.id, old.id));
+    await db
+      .update(articles)
+      .set({ longFormFailedAt: new Date() })
+      .where(eq(articles.id, recent.id));
+
+    const got = await selectLongFormCandidates({ userId, limit: 10 });
+
+    expect(got.map((c) => c.id)).toEqual([old.id, recent.id]);
+  });
+
   it("ข่าวที่ยังไม่มีคะแนน (ข้อมูลเก่า) อยู่ท้ายแถวแต่ยังเลือกได้", async () => {
     const scored = await seed({ interestScore: 0.3 });
     const unscored = await seed({ interestScore: null });
@@ -282,6 +316,29 @@ describe("generateLongFormCaptions", () => {
    * หน้าเว็บยิงทีละชิ้นหลายรอบเพื่อกัน timeout — แต่ละรอบเป็นคำขออิสระ
    * ถ้าไม่บอกว่าตัวไหนพังไปแล้ว มันจะหยิบตัวคะแนนสูงสุดตัวเดิมมาลองซ้ำทุกรอบ
    */
+  it("พังแล้วต้องติดเครื่องหมายไว้ — กดใหม่พรุ่งนี้จะได้ไม่มาขวางหัวคิวอีก", async () => {
+    const a = await seed();
+    mockFetchContent.mockResolvedValue({ ok: false, reason: "เว็บตอบกลับ HTTP 404" });
+
+    await generateLongFormCaptions({ userId, limit: 1 });
+
+    const after = await db.query.articles.findFirst({ where: eq(articles.id, a.id) });
+    expect(after?.longFormFailedAt).toBeInstanceOf(Date);
+  });
+
+  it("สำเร็จแล้วต้องล้างเครื่องหมายทิ้ง (เว็บกลับมาใช้ได้แล้ว ไม่ควรถูกลงโทษต่อ)", async () => {
+    const a = await seed();
+    await db
+      .update(articles)
+      .set({ longFormFailedAt: new Date(Date.now() - 86_400_000) })
+      .where(eq(articles.id, a.id));
+
+    await generateLongFormCaptions({ userId, limit: 1 });
+
+    const after = await db.query.articles.findFirst({ where: eq(articles.id, a.id) });
+    expect(after?.longFormFailedAt).toBeNull();
+  });
+
   it("excludeIds = ข้ามข่าวที่รอบก่อนลองแล้วพัง ไม่วนลองตัวเดิม", async () => {
     const failed = await seed({ interestScore: 0.9 });
     const next = await seed({ interestScore: 0.8 });

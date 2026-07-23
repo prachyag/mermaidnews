@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS `articles` (
 	`relevance_score` real,
 	`interest_score` real,
 	`content` text,
+	`long_form_failed_at` integer,
 	`summary` text,
 	`caption` text,
 	`hashtags` text,

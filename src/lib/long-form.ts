@@ -8,7 +8,7 @@
  * ทำไมต้องอ่านเว็บจริง: RSS ให้แค่พาดหัว + เนื้อหาย่อ ถ้าสั่ง AI เขียนยาวจากแค่นั้น
  * มันจะแต่งข้อมูลขึ้นมาเติมให้ครบความยาว ซึ่งรับไม่ได้สำหรับคอนเทนต์ข่าว
  */
-import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { articles, topics, type ArticleStatus } from "@/db/schema";
 import { isDraftStatus } from "./article-status";
@@ -120,6 +120,14 @@ export async function selectLongFormCandidates(input: {
     .innerJoin(topics, eq(articles.topicId, topics.id))
     .where(and(...conditions))
     .orderBy(
+      /**
+       * ตัวที่เคยพังลงท้ายแถวก่อน แล้วค่อยเรียงตามคะแนนตามปกติ
+       *
+       * ต้องมาก่อนคะแนน เพราะเว็บที่บล็อกบอท/404 มักเป็นข่าวเด่นคะแนนสูง
+       * ถ้าเรียงคะแนนก่อน มันจะลอยขึ้นหัวคิวมาขวางทุกครั้งที่กดปุ่ม
+       * และในกลุ่มที่เคยพังด้วยกัน ให้ตัวที่พังนานแล้วได้ลองก่อน (เว็บอาจกลับมาแล้ว)
+       */
+      asc(sql`coalesce(${articles.longFormFailedAt}, 0)`),
       desc(sql`coalesce(${articles.interestScore}, -1)`),
       desc(articles.publishedAt),
       desc(articles.createdAt),
@@ -141,11 +149,30 @@ async function ensureRealUrl(c: Candidate): Promise<string | null> {
   return resolved.url;
 }
 
+type Attempt = { ok: true } | { ok: false; reason: string };
+
+/**
+ * เขียนแคปชันยาว 1 ชิ้น แล้ว**บันทึกผลลัพธ์ลงเครื่องหมายเสมอ**
+ *
+ * ห่อ attemptLongCaption ไว้อีกชั้นแทนที่จะไปเติมโค้ดตามทางออกทุกจุด
+ * เพราะทางที่ล้มเหลวมี 5 ทาง (แกะลิงก์ไม่ได้ / โหลดเว็บไม่ได้ / AI พัง / AI ว่าไม่เกี่ยว /
+ * AI ไม่คืนแคปชัน) การไล่เติมทีละจุดคือรอวันลืมจุดใดจุดหนึ่งตอนเพิ่มเงื่อนไขใหม่
+ */
+async function writeLongCaption(c: Candidate): Promise<Attempt> {
+  const res = await attemptLongCaption(c);
+  await db
+    .update(articles)
+    // สำเร็จ = ล้างเครื่องหมายทิ้ง (เว็บกลับมาใช้ได้แล้ว ไม่ควรถูกลงโทษต่อ)
+    .set({ longFormFailedAt: res.ok ? null : new Date() })
+    .where(eq(articles.id, c.id));
+  return res;
+}
+
 /**
  * เขียนแคปชันแบบยาวให้ข่าวหนึ่งชิ้น — คืน null ถ้าทำไม่ได้ (ผู้เรียกจะข้ามไปข่าวถัดไป)
  * ทุกความล้มเหลวถูกแปลงเป็นเหตุผลอ่านรู้เรื่อง ไม่ throw ออกไปล้มทั้งรอบ
  */
-async function writeLongCaption(c: Candidate): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function attemptLongCaption(c: Candidate): Promise<Attempt> {
   const realUrl = await ensureRealUrl(c);
   if (!realUrl) return { ok: false, reason: "แกะลิงก์เว็บข่าวจริงไม่สำเร็จ" };
 
@@ -317,8 +344,11 @@ export async function countLongFormCandidates(input: {
   return rows.length;
 }
 
-/** ใช้ในเทส/สคริปต์: ล้างเครื่องหมายว่าเคยเขียนยาวแล้ว */
+/** ใช้ในเทส/สคริปต์: ล้างเครื่องหมายว่าเคยเขียนยาวแล้ว (ทั้งสำเร็จและล้มเหลว) */
 export async function clearLongFormMark(articleIds: number[]): Promise<void> {
   if (articleIds.length === 0) return;
-  await db.update(articles).set({ content: null }).where(inArray(articles.id, articleIds));
+  await db
+    .update(articles)
+    .set({ content: null, longFormFailedAt: null })
+    .where(inArray(articles.id, articleIds));
 }
