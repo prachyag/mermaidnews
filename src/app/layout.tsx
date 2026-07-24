@@ -72,7 +72,8 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <nav className="border-b border-gray-200 dark:border-gray-800">
+        {/* โปร่งแสง + เบลอ เพื่อให้ยังเห็นภาพพื้นหลังผ่าน แต่ตัวหนังสือยังอ่านออกทุกจุดของภาพ */}
+        <nav className="border-b border-gray-200/70 bg-white/70 backdrop-blur dark:border-gray-800/70 dark:bg-gray-950/70">
           <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-3 text-sm">
             <span className="font-semibold">PostMaid</span>
             {user && (
@@ -126,7 +127,7 @@ export default async function RootLayout({
 function SessionEnded() {
   return (
     <div className="flex flex-1 items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl border border-gray-200 p-6 text-center dark:border-gray-700">
+      <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-6 text-center dark:border-gray-700">
         <p className="mb-1 text-2xl">🔒</p>
         <h1 className="mb-2 text-lg font-bold">เซสชันนี้ใช้งานไม่ได้แล้ว</h1>
         <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">

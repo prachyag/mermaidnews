@@ -161,7 +161,7 @@ function UserRow({
   const expired = user.status === "active" && !user.usable;
 
   return (
-    <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+    <div className="rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-4 dark:border-gray-700">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">{user.username}</span>
         {user.role === "admin" && (

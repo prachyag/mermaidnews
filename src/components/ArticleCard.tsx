@@ -268,7 +268,7 @@ export function ArticleCard({
     "rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
-    <li className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+    <li className="rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-4 dark:border-gray-700">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full bg-purple-100 px-2 py-0.5 font-medium text-purple-800 dark:bg-purple-900 dark:text-purple-200">
           {article.topicName}

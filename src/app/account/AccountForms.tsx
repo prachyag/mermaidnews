@@ -6,7 +6,7 @@ import type { AccountDTO } from "@/lib/account";
 const INPUT =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800";
 const CARD =
-  "mb-4 rounded-xl border border-gray-200 p-5 dark:border-gray-700";
+  "mb-4 rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-5 dark:border-gray-700";
 
 type Feedback = { kind: "ok" | "error"; text: string } | null;
 

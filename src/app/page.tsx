@@ -596,7 +596,7 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="mb-6 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+      <section className="mb-6 rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-4 dark:border-gray-700">
         <div className="flex flex-wrap items-center gap-3">
           <label className="text-sm font-medium" htmlFor="topic-select">
             หัวข้อ:
@@ -757,7 +757,7 @@ export default function Home() {
             {[0, 1, 2].map((i) => (
               <li
                 key={i}
-                className="animate-pulse rounded-xl border border-gray-200 p-4 dark:border-gray-700"
+                className="animate-pulse rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-4 dark:border-gray-700"
               >
                 <div className="mb-3 h-4 w-3/4 rounded bg-gray-200 dark:bg-gray-700" />
                 <div className="mb-2 h-3 w-1/3 rounded bg-gray-100 dark:bg-gray-800" />

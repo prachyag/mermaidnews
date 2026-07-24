@@ -35,7 +35,7 @@ export function LoginForm({ registrationOpen }: { registrationOpen: boolean }) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="w-full max-w-sm rounded-xl border border-gray-200 p-6 dark:border-gray-700"
+      className="w-full max-w-sm rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 p-6 dark:border-gray-700"
     >
       <h1 className="mb-1 text-xl font-bold">PostMaid</h1>
       <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">

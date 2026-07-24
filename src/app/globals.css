@@ -19,8 +19,50 @@
   }
 }
 
-body {
+/*
+ * สีพื้นอยู่ที่ html ไม่ใช่ body — เพราะ body::before (ภาพพื้นหลัง) วางด้วย z-index: -1
+ * ถ้า body ยังทาสีทึบของตัวเองอยู่ ภาพจะถูกบังจนไม่เห็นอะไรเลย
+ */
+html {
   background: var(--background);
+}
+
+body {
+  background: transparent;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/*
+ * ภาพพื้นหลัง — วางบน pseudo-element ที่ position: fixed แทนการใช้
+ * background-attachment: fixed บน body โดยตรง เพราะค่านั้นมีปัญหาบน iOS Safari
+ * (ภาพกระตุก/ซูมผิดตอนเลื่อน) วิธีนี้ให้ผลเหมือนกันแต่ทำงานถูกต้องทุกเบราว์เซอร์
+ *
+ * ใช้ .webp ไม่ใช่ .png ที่อัปมา — ภาพนี้เป็นไล่เฉดเรียบ ๆ ซึ่ง PNG เก็บได้แย่มาก
+ * แปลงแล้วเหลือ 19 KB จาก 1,099 KB (เล็กลง 58 เท่า) โดยตาดูไม่ออกว่าต่างกัน
+ *
+ * ชั้น gradient ทับด้านบนคือ "ฉากหลังหรี่" ไม่ใช่การตกแต่ง — ภาพต้นฉบับเป็นโทนพาสเทล
+ * ที่มีทั้งส่วนสว่างจัดและส่วนม่วงเข้ม ถ้าปล่อยเต็มความเข้ม ตัวหนังสือสีเทาเข้มบนพื้นม่วง
+ * จะอ่านยากมาก โดยเฉพาะแถบเมนูด้านบนที่ทับกับดาวเคราะห์พอดี
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.42)),
+    url("/bg.webp");
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+/* โหมดมืด: ภาพเดิมเป็นโทนสว่างจัด ต้องหรี่หนักกว่ามากไม่งั้นตัวหนังสือสีอ่อนหายไปเลย */
+@media (prefers-color-scheme: dark) {
+  body::before {
+    background-image:
+      linear-gradient(rgba(10, 10, 16, 0.78), rgba(10, 10, 16, 0.78)),
+      url("/bg.webp");
+  }
 }

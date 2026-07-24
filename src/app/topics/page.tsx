@@ -384,7 +384,7 @@ export default function TopicsPage() {
       )}
 
       {editingId === "new" && (
-        <div className="mb-4 rounded-xl border border-blue-300 p-4 dark:border-blue-700">
+        <div className="mb-4 rounded-xl border border-blue-300 p-4 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 dark:border-blue-700">
           <h2 className="font-semibold">หัวข้อใหม่</h2>
           {renderForm()}
         </div>
@@ -394,7 +394,7 @@ export default function TopicsPage() {
         {topics.map((t) => (
           <li
             key={t.id}
-            className={`rounded-xl border p-4 ${t.enabled ? "border-gray-200 dark:border-gray-700" : "border-dashed border-gray-300 opacity-60 dark:border-gray-600"}`}
+            className={`rounded-xl border p-4 bg-white/70 backdrop-blur-sm dark:bg-gray-900/70 ${t.enabled ? "border-gray-200 dark:border-gray-700" : "border-dashed border-gray-300 opacity-60 dark:border-gray-600"}`}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
