@@ -9,18 +9,26 @@ const mockFetchContent = vi.fn();
 const mockResolve = vi.fn();
 const mockProcessArticle = vi.fn();
 
+/*
+ * ค่าเพดานเวลาของแต่ละโมดูลต้องใส่ใน mock ด้วย เพราะ long-form เอาไปคำนวณงบเวลารวม
+ * ถ้าลืม จะได้ NaN แล้วตัวกันเวลาหมดจะเงียบไปเฉย ๆ โดยเทสไม่ฟ้อง (vitest ฟ้องให้แล้วรอบนี้)
+ */
 vi.mock("@/lib/article-content", () => ({
   fetchArticleContent: (...a: unknown[]) => mockFetchContent(...a),
   MAX_CONTENT_CHARS: 6000,
+  CONTENT_TIMEOUT_MS: 8_000,
 }));
 
 vi.mock("@/lib/resolve-url", () => ({
   isGoogleNewsUrl: (u: string) => u.includes("news.google.com"),
   resolveArticleUrl: (...a: unknown[]) => mockResolve(...a),
+  RESOLVE_TIMEOUT_MS: 6_000,
 }));
 
 vi.mock("@/lib/ai/gemini", () => ({
   AI_MODEL_NAME: "test-model",
+  // long-form ใช้ค่านี้คำนวณงบเวลา — ถ้าลืมใส่ จะได้ NaN แล้วตัวกันเวลาหมดจะไม่ทำงานเงียบ ๆ
+  AI_TIMEOUT_MS: 20_000,
   getAiProvider: () => ({
     processArticle: (...a: unknown[]) => mockProcessArticle(...a),
     processArticleBatch: vi.fn(),
@@ -33,6 +41,7 @@ const {
   generateLongFormCaptions,
   generateLongFormForArticle,
   selectLongFormCandidates,
+  WORST_ATTEMPT_MS,
 } = await import("./long-form");
 
 const assessment = (over: Partial<ArticleAssessment> = {}): ArticleAssessment => ({
@@ -360,6 +369,33 @@ describe("generateLongFormCaptions", () => {
     expect(res.outcomes).toHaveLength(1);
     expect(res.outcomes[0]).toMatchObject({ ok: false, outOfTime: true });
     expect(res.outcomes[0].reason).toContain("กดอีกครั้ง");
+  });
+
+  /**
+   * นี่คือรูปแบบที่ทำให้เกิด FUNCTION_INVOCATION_TIMEOUT รอบล่าสุด:
+   * เดิมเช็คแค่ "ยังไม่หมดงบ" จึงเริ่มชิ้นใหม่ตอนใกล้หมดเวลาได้ แล้วชิ้นนั้นลากยาวจนทะลุ
+   * ตอนนี้ต้องเหลือเวลาพอสำหรับกรณีแย่ที่สุดของทั้งชิ้น ถึงจะเริ่มได้
+   */
+  it("เหลือเวลาไม่พอสำหรับอีกหนึ่งชิ้นเต็ม ๆ = ไม่เริ่มชิ้นใหม่", async () => {
+    await seed();
+    await seed();
+    // ชิ้นแรกกินเวลาจริง 500ms พอให้เวลาที่เหลือน้อยกว่างบกรณีแย่สุด
+    mockFetchContent.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => r({ ok: true, text: "เนื้อข่าวเต็มจากเว็บจริง" }), 500),
+        ),
+    );
+
+    const res = await generateLongFormCaptions({
+      userId,
+      limit: 5,
+      // เผื่อไว้ 300ms สำหรับ query หาผู้สมัคร — พอให้ชิ้นแรกได้เริ่ม แต่ชิ้นที่สองไม่ได้
+      budgetMs: WORST_ATTEMPT_MS + 300,
+    });
+
+    expect(res.generated).toBe(1);
+    expect(res.outcomes.at(-1)).toMatchObject({ ok: false, outOfTime: true });
   });
 
   it("งบเวลาเหลือเฟือ = ทำครบตามที่ขอ ไม่หยุดกลางคัน", async () => {

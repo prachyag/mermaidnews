@@ -30,7 +30,8 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
  * เดิมไม่มีเพดานเลย พึ่ง default ของ runtime ซึ่งบน serverless แปลว่า "ค้างจนฟังก์ชันตาย"
  * ทำให้ทั้งคำขอถูกตัดทิ้งเพราะข่าวชิ้นเดียวที่ Google ตอบช้า — เสียงานที่ทำสำเร็จไปแล้วด้วย
  */
-const DEFAULT_TIMEOUT_MS = 8_000;
+export const RESOLVE_TIMEOUT_MS = 6_000;
+const DEFAULT_TIMEOUT_MS = RESOLVE_TIMEOUT_MS;
 
 /** ยิง fetch พร้อมเพดานเวลา — คืน null เมื่อหมดเวลา ให้ผู้เรียกแปลงเป็น reason เอง */
 async function fetchWithTimeout(

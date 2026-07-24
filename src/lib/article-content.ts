@@ -19,7 +19,14 @@ export const MAX_CONTENT_CHARS = 6000;
 /** สั้นกว่านี้ถือว่าสกัดไม่สำเร็จ (ได้แต่เมนู/โฆษณา ไม่ใช่เนื้อข่าว) */
 const MIN_USEFUL_CHARS = 200;
 
-const DEFAULT_TIMEOUT_MS = 12_000;
+/**
+ * เพดานเวลาโหลดหน้าเว็บ 1 หน้า
+ *
+ * export ไว้ให้ผู้เรียกคำนวณงบเวลารวมได้ (ดู WORST_ATTEMPT_MS ใน long-form.ts)
+ * ถ้าปล่อยให้แต่ละที่เดาเอง วันที่ปรับค่าตรงนี้ งบของอีกฝั่งจะผิดทันทีโดยไม่มีใครรู้
+ */
+export const CONTENT_TIMEOUT_MS = 8_000;
+const DEFAULT_TIMEOUT_MS = CONTENT_TIMEOUT_MS;
 
 /** บล็อกที่ไม่ใช่เนื้อข่าวแน่ ๆ — ตัดทิ้งก่อนสกัด */
 const NOISE_TAGS = [

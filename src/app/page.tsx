@@ -45,6 +45,51 @@ const STATUS_TABS: { value: string; label: string; dot: string | null }[] = [
 
 const EMPTY_COUNTS = { all: 0 } as ArticleCounts;
 
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/**
+ * ยิง POST แล้วคืนผล — **รับประกันว่าไม่ throw**
+ *
+ * เมื่อฟังก์ชันบน Vercel ถูกตัดเพราะหมดเวลา (FUNCTION_INVOCATION_TIMEOUT) สิ่งที่ได้กลับมา
+ * คือหน้า HTML ของ Vercel ไม่ใช่ JSON — `res.json()` จึงโยน error ออกมา
+ * ถ้าไม่ดัก error จะทะลุออกจากตัวจัดการทั้งก้อน โค้ดสรุปผลท้ายฟังก์ชันไม่ได้ทำงาน
+ * และหน้าจอค้างอยู่ที่ข้อความ "กำลังทำ..." ตลอดไปโดยผู้ใช้ไม่รู้ว่าเลิกไปแล้ว (เกิดจริงมาแล้ว)
+ */
+async function postJson<T>(url: string, body: unknown): Promise<ApiResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่" };
+  }
+
+  // อ่านเป็นข้อความก่อนเสมอ แล้วค่อยลอง parse — body อาจไม่ใช่ JSON และอาจว่างเปล่า
+  const text = await res.text().catch(() => "");
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // ไม่ใช่ JSON (หน้า error ของแพลตฟอร์ม) — ใช้ status เป็นตัวบอกเหตุแทน
+  }
+  const error = (data as { error?: string } | null)?.error;
+
+  if (res.ok) return { ok: true, data: (data ?? {}) as T };
+  return { ok: false, error: error ?? httpReason(res.status) };
+}
+
+/** แปลง HTTP status เป็นเหตุผลที่ผู้ใช้อ่านแล้วรู้ว่าต้องทำอะไรต่อ */
+function httpReason(status: number): string {
+  if (status === 504 || status === 502)
+    return "เซิร์ฟเวอร์ใช้เวลานานเกินกำหนดจนถูกตัด (งานอาจทำสำเร็จไปบางส่วนแล้ว)";
+  if (status === 401) return "เซสชันหมดอายุ — เข้าสู่ระบบใหม่";
+  if (status === 413) return "ข้อมูลที่ส่งใหญ่เกินไป";
+  return `เซิร์ฟเวอร์ตอบกลับ HTTP ${status}`;
+}
+
 function formatDate(value: string | null): string {
   if (!value) return "-";
   return new Date(value).toLocaleString("th-TH", {
@@ -151,19 +196,26 @@ export default function Home() {
     setProcessing(true);
     const total = { drafted: 0, irrelevant: 0, failed: 0 };
     let lastError: string | null = null;
+    type ProcessResponse = {
+      drafted: number;
+      irrelevant: number;
+      failed: number;
+      processed: number;
+      remaining: number;
+      lastError: string | null;
+    };
     try {
       for (let i = 0; i < 100; i++) {
-        const res = await fetch("/api/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // 10 ข่าว = 1 request ไปหา AI (ฝั่งเซิร์ฟเวอร์รวมเป็นชุดให้)
-          body: JSON.stringify({ topicId: selectedTopic, limit: 10 }),
+        // 10 ข่าว = 1 request ไปหา AI (ฝั่งเซิร์ฟเวอร์รวมเป็นชุดให้)
+        const res = await postJson<ProcessResponse>("/api/process", {
+          topicId: selectedTopic,
+          limit: 10,
         });
-        const data = await res.json();
         if (!res.ok) {
-          lastError = data.error ?? "เกิดข้อผิดพลาด";
+          lastError = res.error;
           break;
         }
+        const data = res.data;
         total.drafted += data.drafted;
         total.irrelevant += data.irrelevant;
         total.failed += data.failed;
@@ -176,6 +228,9 @@ export default function Home() {
           `🤖 AI กำลังประมวลผล... เหลือ ${data.remaining} ข่าว (ร่างแล้ว ${total.drafted}, ไม่เกี่ยวข้อง ${total.irrelevant})`,
         );
       }
+    } catch (err) {
+      // เช่นเดียวกับ runLongForm — ห้ามปล่อยให้หน้าจอค้างที่ "กำลังประมวลผล..."
+      lastError = err instanceof Error ? err.message : String(err);
     } finally {
       setProcessing(false);
     }
@@ -260,49 +315,74 @@ export default function Home() {
     let generated = 0;
     let skipped = 0;
     let lastReason: string | null = null;
+    let aborted: string | null = null;
     /**
      * id ที่ลองแล้วไม่สำเร็จ ต้องส่งไปบอกเซิร์ฟเวอร์ทุกรอบ
      * ไม่งั้นรอบถัดไปจะหยิบข่าวคะแนนสูงสุดตัวเดิมที่เพิ่งพังมาลองซ้ำจนครบทุกรอบ
      */
     const failed: number[] = [];
+    /**
+     * คำขอที่พังติดกัน — พังทีเดียวยังไปต่อ (อาจเป็นข่าวชิ้นนั้นชิ้นเดียวที่มีปัญหา)
+     * แต่พังติดกันสองครั้งแปลว่าเซิร์ฟเวอร์มีปัญหาจริง วนต่อก็เสียเวลาผู้ใช้เปล่า
+     */
+    let consecutiveErrors = 0;
+
+    type LongFormResponse = {
+      generated: number;
+      outcomes: { articleId: number; ok: boolean; reason?: string }[];
+    };
+
     try {
       for (let round = 0; round < MAX_LONG_FORM; round++) {
         setMessage(
           `✨ กำลังอ่านเว็บและเขียนแคปชันยาว... (${generated}/${MAX_LONG_FORM} ข่าว)`,
         );
-        const res = await fetch("/api/articles/long-form", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topicId: selectedTopic, limit: 1, exclude: failed }),
+        const res = await postJson<LongFormResponse>("/api/articles/long-form", {
+          topicId: selectedTopic,
+          limit: 1,
+          exclude: failed,
         });
-        const data = await res.json();
-        if (!res.ok) {
-          lastReason = data.error ?? "เขียนแคปชันยาวไม่สำเร็จ";
-          break;
-        }
 
-        type Outcome = { articleId: number; ok: boolean; reason?: string };
-        const outcomes: Outcome[] = data.outcomes ?? [];
+        if (!res.ok) {
+          lastReason = res.error;
+          if (++consecutiveErrors >= 2) {
+            aborted = res.error;
+            break;
+          }
+          // งานฝั่งเซิร์ฟเวอร์บันทึกทีละชิ้นอยู่แล้ว รอบถัดไปจึงเริ่มจากของที่เหลือได้เลย
+          await reloadArticles();
+          continue;
+        }
+        consecutiveErrors = 0;
+
+        const outcomes = res.data.outcomes ?? [];
         // ไม่มีผู้สมัครเหลือแล้ว — หยุด ไม่ต้องวนให้ครบรอบ
         if (outcomes.length === 0) break;
 
-        generated += data.generated;
+        generated += res.data.generated;
         for (const o of outcomes.filter((x) => !x.ok)) {
           skipped++;
           failed.push(o.articleId);
           lastReason = o.reason ?? lastReason;
         }
         // ได้ของแล้วรีเฟรชเลย ผู้ใช้จะได้เห็นทีละชิ้นแทนที่จะรอจนจบ
-        if (data.generated > 0) await reloadArticles();
+        if (res.data.generated > 0) await reloadArticles();
       }
+    } catch (err) {
+      // กันเหนียว: ต่อให้มีอะไรหลุดมาถึงตรงนี้ ผู้ใช้ต้องได้คำตอบเสมอ ห้ามค้างที่ "กำลังทำ..."
+      aborted = err instanceof Error ? err.message : String(err);
     } finally {
       setLongForming(false);
     }
+
+    const done = generated > 0 ? `เขียนแคปชันยาวสำเร็จ ${generated} ข่าว` : "ไม่ได้เขียนแคปชันยาวเลย";
+    const skipNote = skipped > 0 ? ` • ข้าม ${skipped} ข่าว (${lastReason})` : "";
     setMessage(
-      generated === 0
-        ? `ไม่ได้เขียนแคปชันยาวเลย — ${lastReason ?? "ไม่มีข่าวที่เข้าเกณฑ์"}`
-        : `✨ เขียนแคปชันยาวสำเร็จ ${generated} ข่าว` +
-            (skipped > 0 ? ` (ข้าม ${skipped} ข่าว: ${lastReason})` : ""),
+      aborted
+        ? `⚠️ หยุดกลางคัน — ${aborted} | ${done}${skipNote} — กดอีกครั้งเพื่อทำต่อ`
+        : generated === 0
+          ? `${done} — ${lastReason ?? "ไม่มีข่าวที่เข้าเกณฑ์"}`
+          : `✨ ${done}${skipNote}`,
     );
     await reloadArticles();
   }, [selectedTopic, reloadArticles]);

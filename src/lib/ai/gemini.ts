@@ -50,12 +50,30 @@ const GENERATION_CONFIG_NO_THINKING = {
   maxOutputTokens: MAX_OUTPUT_TOKENS,
 } as const;
 
+/**
+ * เพดานเวลารวมของการเรียก Gemini 1 ครั้ง (นับรวมการยิงซ้ำทุกรอบ)
+ *
+ * ต้องมีเพราะ SDK ไม่มี timeout ให้เอง: ถ้า Gemini ค้าง ฟังก์ชันจะค้างจนแพลตฟอร์มฆ่าทิ้ง
+ * ผู้ใช้ได้แค่ FUNCTION_INVOCATION_TIMEOUT โดยไม่รู้ว่าเกิดอะไร และงานที่ทำสำเร็จไปแล้วก็หายด้วย
+ * ยอมล้มเองพร้อมบอกเหตุ ดีกว่าถูกตัดกลางคันแบบไม่มีข้อมูล
+ *
+ * 20 วิ = สูงกว่า p90 ที่วัดได้จริง (~14 วิ) พอสมควร แต่ยังเหลือที่ให้เฟสอื่นใน 60 วิของ Vercel
+ */
+export const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 20_000;
+
 /** จำนวนครั้งสูงสุดที่ยิงซ้ำเมื่อเจออาการชั่วคราว (ตอบกลับว่าง) */
 const MAX_ATTEMPTS = 3;
 /** หน่วงก่อนลองใหม่ คูณตามรอบ (1x, 2x) — กันยิงรัวใส่ API ที่กำลังมีปัญหา */
 const RETRY_DELAY_MS = 700;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function timedOut(): Error {
+  return new Error(
+    `Gemini ไม่ตอบภายใน ${Math.round(AI_TIMEOUT_MS / 1000)} วินาที — ` +
+      "ยกเลิกเองเพื่อไม่ให้ทั้งคำขอถูกแพลตฟอร์มตัดทิ้ง (ปรับได้ที่ GEMINI_TIMEOUT_MS)",
+  );
+}
 
 function isInvalidArgument(err: unknown): boolean {
   return /INVALID_ARGUMENT|invalid argument/i.test(
@@ -225,13 +243,14 @@ export class GeminiProvider implements AiProvider {
   }
 
   /** ยิง 1 ครั้ง ตามว่าตอนนี้ยังใช้ thinkingConfig ได้อยู่ไหม */
-  private callOnce(contents: string, schema: object) {
+  private callOnce(contents: string, schema: object, abortSignal?: AbortSignal) {
     return this.client.models.generateContent({
       model: MODEL,
       contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
+        abortSignal,
         ...(this.thinkingUnsupported ? GENERATION_CONFIG_NO_THINKING : GENERATION_CONFIG),
       },
     });
@@ -248,37 +267,55 @@ export class GeminiProvider implements AiProvider {
    *    เป็นอาการชั่วคราว ไม่ใช่คำขอผิด จึงลองใหม่ได้ ถ้าไม่ลองใหม่ ข่าว "ทั้งชุด" จะล้มเหลวพร้อมกัน
    *
    * ส่วน MAX_TOKENS ไม่ลองใหม่ เพราะเป็นปัญหาเชิงตั้งค่า (ชุดใหญ่เกิน) — ลองกี่ครั้งก็เหมือนเดิม
+   *
+   * **เพดานเวลาครอบทั้งฟังก์ชัน ไม่ใช่ต่อครั้ง** — ที่สำคัญคือเวลารวมที่ผู้เรียกต้องรอ
+   * ถ้าตั้งต่อครั้ง 3 ครั้งรวมกันก็ยังทะลุงบของ serverless ได้อยู่ดี
+   * เดิมไม่มีเพดานเลย: Gemini ค้าง = ฟังก์ชันค้างจนแพลตฟอร์มฆ่าทิ้ง (FUNCTION_INVOCATION_TIMEOUT)
+   * แล้วผู้ใช้ไม่ได้อะไรกลับไปเลยแม้แต่ข้อความบอกเหตุ
    */
   private async generate(contents: string, schema: object) {
     let lastError: unknown;
+    const deadline = Date.now() + AI_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        const response = await this.callOnce(contents, schema);
-        assertNotTruncated(response.candidates?.[0]?.finishReason);
-        if (response.text?.trim()) return response;
-        lastError = new Error("Gemini ตอบกลับว่าง");
-      } catch (err) {
-        // รุ่นนี้ไม่รับ thinkingConfig — จำไว้แล้ววนไปยิงใหม่แบบไม่มี thinking ทันที
-        if (isInvalidArgument(err) && !this.thinkingUnsupported) {
-          this.thinkingUnsupported = true;
-          console.warn(
-            `[gemini] รุ่น "${MODEL}" ไม่รับ thinkingConfig (budget=${THINKING_BUDGET}) — ` +
-              `ยิงใหม่โดยไม่ตั้ง thinking พิจารณาตั้ง GEMINI_THINKING_BUDGET ให้เหมาะกับรุ่นนี้`,
-          );
-          continue;
+    try {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          const response = await this.callOnce(contents, schema, controller.signal);
+          assertNotTruncated(response.candidates?.[0]?.finishReason);
+          if (response.text?.trim()) return response;
+          lastError = new Error("Gemini ตอบกลับว่าง");
+        } catch (err) {
+          if (controller.signal.aborted) throw timedOut();
+          // รุ่นนี้ไม่รับ thinkingConfig — จำไว้แล้ววนไปยิงใหม่แบบไม่มี thinking ทันที
+          if (isInvalidArgument(err) && !this.thinkingUnsupported) {
+            this.thinkingUnsupported = true;
+            console.warn(
+              `[gemini] รุ่น "${MODEL}" ไม่รับ thinkingConfig (budget=${THINKING_BUDGET}) — ` +
+                `ยิงใหม่โดยไม่ตั้ง thinking พิจารณาตั้ง GEMINI_THINKING_BUDGET ให้เหมาะกับรุ่นนี้`,
+            );
+            continue;
+          }
+          throw err instanceof Error
+            ? new Error(`เรียก Gemini รุ่น "${MODEL}" ไม่สำเร็จ: ${err.message}`)
+            : err;
         }
-        throw err instanceof Error
-          ? new Error(`เรียก Gemini รุ่น "${MODEL}" ไม่สำเร็จ: ${err.message}`)
-          : err;
+        // เหลือเวลาไม่พอจะลองใหม่แล้ว — เลิกตรงนี้ ดีกว่านอนรอจนโดนตัดกลางคัน
+        const wait = RETRY_DELAY_MS * attempt;
+        if (attempt < MAX_ATTEMPTS) {
+          if (Date.now() + wait >= deadline) throw timedOut();
+          await sleep(wait);
+        }
       }
-      if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS * attempt);
-    }
 
-    throw new Error(
-      `Gemini รุ่น "${MODEL}" ตอบกลับว่างติดต่อกัน ${MAX_ATTEMPTS} ครั้ง — ` +
-        `(${lastError instanceof Error ? lastError.message : "ไม่ทราบสาเหตุ"})`,
-    );
+      throw new Error(
+        `Gemini รุ่น "${MODEL}" ตอบกลับว่างติดต่อกัน ${MAX_ATTEMPTS} ครั้ง — ` +
+          `(${lastError instanceof Error ? lastError.message : "ไม่ทราบสาเหตุ"})`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async processArticle(input: ProcessArticleInput): Promise<ArticleAssessment> {

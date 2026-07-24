@@ -12,9 +12,9 @@ import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-or
 import { db } from "@/db";
 import { articles, topics, type ArticleStatus } from "@/db/schema";
 import { isDraftStatus } from "./article-status";
-import { fetchArticleContent } from "./article-content";
-import { isGoogleNewsUrl, resolveArticleUrl } from "./resolve-url";
-import { AI_MODEL_NAME, getAiProvider } from "./ai/gemini";
+import { CONTENT_TIMEOUT_MS, fetchArticleContent } from "./article-content";
+import { isGoogleNewsUrl, resolveArticleUrl, RESOLVE_TIMEOUT_MS } from "./resolve-url";
+import { AI_MODEL_NAME, AI_TIMEOUT_MS, getAiProvider } from "./ai/gemini";
 import { recordAiCall } from "./ai-stats";
 import { MAX_LONG_FORM } from "./long-form-policy";
 
@@ -29,12 +29,19 @@ export { MAX_LONG_FORM } from "./long-form-policy";
 const CANDIDATE_MULTIPLIER = 4;
 
 /**
- * งบเวลาเริ่มงานชิ้นใหม่ ต่อ 1 คำขอ — ตั้งต่ำกว่า maxDuration (60s) ไว้เผื่อชิ้นที่กำลังทำอยู่
+ * เวลาที่แย่ที่สุดที่ข่าว 1 ชิ้นกินได้ — คำนวณจากเพดานจริงของแต่ละเฟส ไม่ได้ตั้งด้วยมือ
  *
- * ตัวเลขจากของจริง: AI ชิ้นเดียว p90 ~14s (สถิติใน ai_call_logs) + โหลดเว็บ ~1.5s
- * เริ่มชิ้นใหม่ตอนนาทีที่ 40 จึงยังจบทันในกรณีแย่ ๆ
+ * แกะลิงก์ยิง Google 2 ครั้ง + โหลดหน้าเว็บ 1 ครั้ง + เรียก AI (รวมยิงซ้ำ) 1 ก้อน
+ * ผูกกับค่าคงที่ของแต่ละโมดูลโดยตรง เพื่อให้วันที่ใครปรับเพดานฝั่งนั้น งบตรงนี้ขยับตามเอง
  */
-const DEFAULT_BUDGET_MS = 40_000;
+export const WORST_ATTEMPT_MS =
+  RESOLVE_TIMEOUT_MS * 2 + CONTENT_TIMEOUT_MS + AI_TIMEOUT_MS;
+
+/**
+ * เวลาที่ยอมให้ฟังก์ชันนี้ใช้ทั้งหมด — ต่ำกว่า maxDuration (60s) ไว้เผื่อ cold start
+ * และเวลาที่เสียไปกับ auth/DB ก่อนถึงตรงนี้
+ */
+const DEFAULT_BUDGET_MS = 50_000;
 
 export type LongFormOutcome = {
   articleId: number;
@@ -270,7 +277,13 @@ export async function generateLongFormCaptions(input: {
 
   for (const c of candidates) {
     if (generated >= limit) break;
-    if (Date.now() - startedAt >= budgetMs) {
+    /**
+     * ต้องเหลือเวลาพอสำหรับกรณีแย่ที่สุดของ "ทั้งชิ้น" ไม่ใช่แค่ยังไม่หมดงบ
+     *
+     * เช็คแค่ว่ายังไม่หมดงบคือที่มาของ FUNCTION_INVOCATION_TIMEOUT รอบล่าสุด:
+     * เริ่มชิ้นใหม่ตอนวินาทีที่ 39 (ยังไม่ถึงงบ 40) แล้วชิ้นนั้นกินอีก 30 วิ = ทะลุ 60
+     */
+    if (Date.now() - startedAt + WORST_ATTEMPT_MS > budgetMs) {
       outcomes.push({
         articleId: c.id,
         title: c.title,
