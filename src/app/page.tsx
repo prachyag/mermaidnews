@@ -539,7 +539,7 @@ export default function Home() {
   const truncated = shownTotal > articleRows.length;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8">
+    <div className="mx-auto w-full max-w-4xl px-4 py-8 lg:max-w-6xl">
       {/*
         ถามช่วงเวลาก่อนดึงทุกครั้ง — ใช้กล่องของเราเองแทน confirm() เพราะมี 3 ตัวเลือก
         (confirm ให้ได้แค่ตกลง/ยกเลิก) และต้องอธิบายแต่ละตัวเลือกให้เข้าใจก่อนกด
@@ -648,44 +648,51 @@ export default function Home() {
         )}
       </section>
 
-      {/* แท็บสถานะ — sticky ไว้เพราะรายการข่าวยาว ผู้ใช้ต้องสลับแท็บได้โดยไม่ต้องเลื่อนขึ้น */}
-      <div
-        role="tablist"
-        aria-label="กรองตามสถานะ"
-        className="sticky top-0 z-10 -mx-4 mb-4 flex gap-1 overflow-x-auto border-b border-gray-200 bg-white/80 px-4 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/80"
-      >
-        {STATUS_TABS.map((tab) => {
-          const n = counts[tab.value as keyof ArticleCounts] ?? 0;
-          const active = statusFilter === tab.value;
-          return (
-            <button
-              key={tab.value}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setStatusFilter(tab.value)}
-              className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors ${
-                active
-                  ? "bg-gray-900 font-semibold text-white dark:bg-white dark:text-gray-900"
-                  : n === 0
-                    ? "text-gray-400 hover:bg-gray-100 dark:text-gray-600 dark:hover:bg-gray-800"
-                    : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-            >
-              {tab.dot && (
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${tab.dot} ${active ? "" : n === 0 ? "opacity-40" : ""}`}
-                />
-              )}
-              {tab.label}
-              <span
-                className={`tabular-nums ${active ? "opacity-80" : "text-gray-400 dark:text-gray-500"}`}
+      {/*
+        จอแคบ: แถบแนวนอนเลื่อนซ้ายขวาอยู่บนสุด (แท็บ 10 อันไม่มีทางพอในแถวเดียว)
+        จอกว้าง (lg ขึ้นไป): กลายเป็นเมนูแนวตั้งด้านซ้าย เห็นครบทุกสถานะพร้อมกันโดยไม่ต้องเลื่อนหา
+
+        ใช้ DOM ชุดเดียวสลับด้วย grid + utility ตาม breakpoint ไม่ใช่ทำสองชุดแล้วซ่อนทีละอัน
+        เพราะสองชุดจะกลายเป็น tablist ซ้ำสำหรับ screen reader และวันหลังแก้ที่เดียวลืมอีกที่แน่นอน
+      */}
+      <div className="lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:items-start lg:gap-6">
+        <div
+          role="tablist"
+          aria-label="กรองตามสถานะ"
+          className="sticky top-0 z-10 -mx-4 mb-4 flex gap-1 overflow-x-auto border-b border-gray-200 bg-white/80 px-4 py-2 backdrop-blur lg:top-4 lg:mx-0 lg:mb-0 lg:flex-col lg:overflow-visible lg:rounded-xl lg:border lg:border-gray-200/70 lg:bg-white/70 lg:p-2 lg:backdrop-blur-sm dark:border-gray-800 dark:bg-gray-950/80 lg:dark:border-gray-700/70 lg:dark:bg-gray-900/70"
+        >
+          {STATUS_TABS.map((tab) => {
+            const n = counts[tab.value as keyof ArticleCounts] ?? 0;
+            const active = statusFilter === tab.value;
+            return (
+              <button
+                key={tab.value}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setStatusFilter(tab.value)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors lg:w-full lg:rounded-lg lg:py-2 ${
+                  active
+                    ? "bg-gray-900 font-semibold text-white dark:bg-white dark:text-gray-900"
+                    : n === 0
+                      ? "text-gray-400 hover:bg-gray-100 dark:text-gray-600 dark:hover:bg-gray-800"
+                      : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                }`}
               >
-                {n}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                {tab.dot && (
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${tab.dot} ${active ? "" : n === 0 ? "opacity-40" : ""}`}
+                  />
+                )}
+                {tab.label}
+                <span
+                  className={`tabular-nums lg:ml-auto ${active ? "opacity-80" : "text-gray-400 dark:text-gray-500"}`}
+                >
+                  {n}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
       <section>
         {/* หัวรายการ + ปุ่มลงมือทำของแท็บนี้ อยู่บรรทัดเดียวกัน เพื่อผูกปุ่มเข้ากับของที่มันแตะ */}
@@ -788,6 +795,7 @@ export default function Home() {
           </ul>
         )}
       </section>
+      </div>
 
       <p className="mt-8 text-center text-xs text-gray-400">
         จัดการหัวข้อได้ที่หน้า{" "}
