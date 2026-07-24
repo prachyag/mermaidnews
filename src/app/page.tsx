@@ -7,6 +7,7 @@ import { STATUS_META, STATUS_ORDER, statusLabel } from "@/lib/article-status";
 import type { ArticleCounts } from "@/lib/article-counts";
 import { MAX_REPROCESS, REPROCESSABLE } from "@/lib/reprocess-policy";
 import { MAX_LONG_FORM } from "@/lib/long-form-policy";
+import { FETCH_WINDOW_PRESETS, fetchWindowLabel } from "@/lib/fetch-window";
 
 type Topic = {
   id: number;
@@ -106,6 +107,7 @@ export default function Home() {
   const [selectedTopic, setSelectedTopic] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [fetching, setFetching] = useState(false);
+  const [fetchPromptOpen, setFetchPromptOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
@@ -412,40 +414,41 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetching, loadStatus, reloadArticles, startProcessing]);
 
-  async function handleFetchNow() {
+  /**
+   * ดึงข่าวจริง — days = ย้อนหลังกี่วัน (ผู้ใช้เลือกจากกล่องถามก่อนหน้านี้)
+   *
+   * ต้องให้เลือกเพราะถ้าไม่ส่งตัวกรองเวลาไปเลย Google News คืนข่าวเก่ามากปนมาด้วย
+   * (วัดจากของจริง: เก่าสุด 3,384 วัน) แล้วโควตา AI หมดไปกับการคัดกรองข่าวที่ตกยุคไปแล้ว
+   */
+  async function runFetch(days: number) {
+    setFetchPromptOpen(false);
     setMessage(null);
     setFetching(true);
-    try {
-      const res = await fetch("/api/fetch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topicId: selectedTopic }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setFetching(false);
-        setMessage(data.error ?? "เกิดข้อผิดพลาด");
-        return;
-      }
-      batchRunIds.current = (data.started ?? []).map(
-        (r: { runId: number }) => r.runId,
-      );
-      const skippedNote = (data.skipped ?? [])
-        .map(
-          (s: { topicName: string; reason: string }) =>
-            `${s.topicName}: ${s.reason === "locked" ? "กำลังดึงอยู่แล้ว" : "ปิดใช้งานอยู่"}`,
-        )
-        .join(" • ");
-      if (batchRunIds.current.length === 0) {
-        setFetching(false);
-        setMessage(skippedNote || "ไม่มีหัวข้อให้ดึง");
-      } else if (skippedNote) {
-        setMessage(skippedNote);
-      }
-    } catch (err) {
+    const res = await postJson<{
+      days: number;
+      started: { runId: number }[];
+      skipped: { topicName: string; reason: string }[];
+    }>("/api/fetch", { topicId: selectedTopic, days });
+
+    if (!res.ok) {
       setFetching(false);
+      setMessage(`❌ ${res.error}`);
+      return;
+    }
+    batchRunIds.current = (res.data.started ?? []).map((r) => r.runId);
+    const skippedNote = (res.data.skipped ?? [])
+      .map(
+        (s) =>
+          `${s.topicName}: ${s.reason === "locked" ? "กำลังดึงอยู่แล้ว" : "ปิดใช้งานอยู่"}`,
+      )
+      .join(" • ");
+    if (batchRunIds.current.length === 0) {
+      setFetching(false);
+      setMessage(skippedNote || "ไม่มีหัวข้อให้ดึง");
+    } else {
       setMessage(
-        `เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`,
+        `🔄 กำลังดึงข่าว (${fetchWindowLabel(days)})...` +
+          (skippedNote ? ` (${skippedNote})` : ""),
       );
     }
   }
@@ -537,6 +540,55 @@ export default function Home() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
+      {/*
+        ถามช่วงเวลาก่อนดึงทุกครั้ง — ใช้กล่องของเราเองแทน confirm() เพราะมี 3 ตัวเลือก
+        (confirm ให้ได้แค่ตกลง/ยกเลิก) และต้องอธิบายแต่ละตัวเลือกให้เข้าใจก่อนกด
+      */}
+      {fetchPromptOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="fetch-window-title"
+          onClick={() => setFetchPromptOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-gray-900"
+            // กันคลิกในกล่องทะลุไปโดนพื้นหลังจนกล่องปิดเอง
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="fetch-window-title" className="text-lg font-semibold">
+              ดึงข่าวย้อนหลังกี่วัน?
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              ยิ่งย้อนไกล ยิ่งได้ข่าวเยอะแต่เก่าลง และกินโควตา AI มากขึ้นตาม
+            </p>
+
+            <div className="mt-4 space-y-2">
+              {FETCH_WINDOW_PRESETS.map((p) => (
+                <button
+                  key={p.days}
+                  onClick={() => runFetch(p.days)}
+                  className="flex w-full items-baseline justify-between rounded-lg border border-gray-300 px-4 py-3 text-left transition-colors hover:border-blue-500 hover:bg-blue-50 dark:border-gray-600 dark:hover:border-blue-500 dark:hover:bg-blue-950"
+                >
+                  <span className="font-medium">{p.label}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {p.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setFetchPromptOpen(false)}
+              className="mt-4 w-full rounded-lg px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      )}
+
       <header className="mb-6">
         <h1 className="text-2xl font-bold">PostMaid</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -565,7 +617,7 @@ export default function Home() {
           </select>
 
           <button
-            onClick={handleFetchNow}
+            onClick={() => setFetchPromptOpen(true)}
             disabled={fetching || processing}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >

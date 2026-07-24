@@ -40,7 +40,19 @@ export function editionsFor(keyword: string, source: NewsSource): EditionKey[] {
   }
 }
 
-export function buildFeedUrl(keyword: string, edition: EditionKey): string {
-  const params = new URLSearchParams({ q: keyword, ...EDITIONS[edition] });
+/**
+ * ประกอบ URL ฟีด RSS ของ Google News
+ *
+ * days = จำกัดอายุข่าวย้อนหลังกี่วัน ด้วยตัวดำเนินการ `when:Nd` ในคำค้น
+ * ไม่ระบุ = ไม่กรองเวลา ซึ่ง Google จะคืนข่าวเก่ามากปนมาด้วย (วัดได้ถึง 3,384 วัน)
+ * จึงควรระบุเสมอในทางเดินปกติ — ดู src/lib/fetch-window.ts
+ */
+export function buildFeedUrl(
+  keyword: string,
+  edition: EditionKey,
+  days?: number,
+): string {
+  const q = days ? `${keyword} when:${days}d` : keyword;
+  const params = new URLSearchParams({ q, ...EDITIONS[edition] });
   return `https://news.google.com/rss/search?${params.toString()}`;
 }

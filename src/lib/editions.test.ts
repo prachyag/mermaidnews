@@ -61,4 +61,24 @@ describe("buildFeedUrl", () => {
     const url = new URL(buildFeedUrl('mermaid & "parade" ?x=1', "intl"));
     expect(url.searchParams.get("q")).toBe('mermaid & "parade" ?x=1');
   });
+
+  /**
+   * ยืนยันกับ Google จริงแล้วว่า when:Nd ถูกเคารพตรงเป๊ะ
+   * (ไม่กรอง = เก่าสุด 3,384 วัน / when:7d = เก่าสุด 7.0 วัน)
+   */
+  it("ระบุจำนวนวัน = แนบตัวกรอง when:Nd ไปในคำค้น", () => {
+    const url = new URL(buildFeedUrl("นางเงือก", "th", 7));
+    expect(url.searchParams.get("q")).toBe("นางเงือก when:7d");
+  });
+
+  it("ไม่ระบุจำนวนวัน = ไม่แนบตัวกรอง (พฤติกรรมเดิม)", () => {
+    const url = new URL(buildFeedUrl("นางเงือก", "th"));
+    expect(url.searchParams.get("q")).toBe("นางเงือก");
+  });
+
+  it("ตัวกรองเวลาต้องอยู่ในคำค้น ไม่ใช่พารามิเตอร์แยก (Google รับแบบนี้เท่านั้น)", () => {
+    const url = new URL(buildFeedUrl("mermaid", "intl", 30));
+    expect(url.searchParams.get("q")).toBe("mermaid when:30d");
+    expect(url.searchParams.get("when")).toBeNull();
+  });
 });

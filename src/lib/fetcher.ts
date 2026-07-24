@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { articles, blockedArticles, fetchRuns, topics, type Topic } from "@/db/schema";
 import { normalizeTitle, normalizeUrl } from "@/lib/normalize";
 import { buildFeedUrl, editionsFor } from "@/lib/editions";
+import { DEFAULT_FETCH_DAYS } from "@/lib/fetch-window";
 
 type FeedItem = {
   title?: string;
@@ -72,8 +73,18 @@ export async function acquireFetchRun(
   return { started: true, runId: run.id, topicId: topic.id, topicName: topic.name };
 }
 
-/** ดึงข่าวจริงของหนึ่งรอบ (ต้องได้ runId จาก acquireFetchRun มาก่อน) */
-export async function executeFetchRun(runId: number, topic: Topic): Promise<void> {
+/**
+ * ดึงข่าวจริงของหนึ่งรอบ (ต้องได้ runId จาก acquireFetchRun มาก่อน)
+ *
+ * days = ดึงข่าวย้อนหลังกี่วัน (ดู src/lib/fetch-window.ts) — ไม่ระบุใช้ค่าเริ่มต้น
+ * ไม่เก็บลง fetch_runs เพราะยังไม่มีที่ไหนต้องอ่านย้อนหลัง และการเพิ่มคอลัมน์
+ * แปลว่าต้องไป ALTER TABLE บน production ด้วยมืออีกรอบ (ดู DEPLOY.md 2b)
+ */
+export async function executeFetchRun(
+  runId: number,
+  topic: Topic,
+  days: number = DEFAULT_FETCH_DAYS,
+): Promise<void> {
   let found = 0;
   let newCount = 0;
   let duplicates = 0;
@@ -105,7 +116,7 @@ export async function executeFetchRun(runId: number, topic: Topic): Promise<void
 
     for (const { keyword, edition } of jobs) {
       try {
-        const feed = await parser.parseURL(buildFeedUrl(keyword, edition));
+        const feed = await parser.parseURL(buildFeedUrl(keyword, edition, days));
         const items = (feed.items ?? []).slice(0, MAX_ITEMS_PER_KEYWORD);
         found += items.length;
 
